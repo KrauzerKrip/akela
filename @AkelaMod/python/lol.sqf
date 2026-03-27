@@ -23,7 +23,7 @@ scriptName "Pythia_Polling_Loop";
             {
                 private _queryType = _x select 0;
                 private _queryArg  = _x select 1;
-                private _queryResult = createHashMap; // Default to HashMap for dict responses
+                private _queryResult = [];
 
                 switch (_queryType) do {
                     case "log": {
@@ -47,7 +47,7 @@ scriptName "Pythia_Polling_Loop";
                         // Build a HashMap of {"netId": "GroupId"}
                         {
                             if (side _x == _side) then {
-                                _queryResult set [netId _x, groupId _x];
+                                _queryResult pushBack [netId _x, groupId _x];
                             };
                         } forEach allGroups;
                     };
@@ -60,10 +60,10 @@ scriptName "Pythia_Polling_Loop";
                         if (!isNull _grp) then {
                             // Build a HashMap of {"netId": "UnitName"}
                             {
-                                _queryResult set [netId _x, name _x];
+                                _queryResult pushBack [netId _x, name _x];
                             } forEach (units _grp);
                         } else {
-                            _queryResult set ["error", "Group not found or is null"];
+                            _queryResult pushBack ["error", "Group not found or is null"];
                         };
                     };
 

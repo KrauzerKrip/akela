@@ -57,7 +57,7 @@ def test_ammo_chain(*args):
 
 def _on_groups_received(response):
     # Response structure: [ ["groups", "BLUFOR", {"0:289": "Alpha 1-1", ...}] ]
-    groups_dict = response[0][2]
+    groups_dict = dict(response[0][2])
     
     if not groups_dict:
         log_to_server("Pythia: No BLUFOR groups found.")
@@ -73,7 +73,7 @@ def _on_groups_received(response):
 
 def _on_units_received(response):
     # Response structure: [ ["units", "0:289", {"0:1779946": "Alpha 1-1:1", ...}] ]
-    units_dict = response[0][2]
+    units_dict = dict(response[0][2])
     
     if not units_dict or "error" in units_dict:
         log_to_server("Pythia: No units found in group.")
