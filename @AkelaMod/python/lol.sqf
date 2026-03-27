@@ -80,6 +80,77 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
+                    case "setCombatMode": {
+                        private _grp = groupFromNetId (_queryArg select 0);
+                        private _mode = _queryArg select 1;
+                        if (!isNull _grp) then {
+                            _grp setCombatMode _mode;
+                            _queryResult = true;
+                        } else {
+                            _queryResult = false;
+                        };
+                    };
+
+                    case "setCombatBehaviour": {
+                        private _netId = _queryArg select 0;
+                        private _behaviour = _queryArg select 1;
+                        private _grp = groupFromNetId _netId;
+                        if (!isNull _grp) then {
+                            _grp setCombatBehaviour _behaviour;
+                            _queryResult = true;
+                        } else {
+                            private _unit = objectFromNetId _netId;
+                            if (!isNull _unit) then {
+                                _unit setCombatBehaviour _behaviour;
+                                _queryResult = true;
+                            } else {
+                                _queryResult = false;
+                            };
+                        };
+                    };
+
+                    case "setGroupId": {
+                        private _grp = groupFromNetId (_queryArg select 0);
+                        private _name = _queryArg select 1;
+                        if (!isNull _grp) then {
+                            _grp setGroupId [_name];
+                            _queryResult = true;
+                        } else {
+                            _queryResult = false;
+                        };
+                    };
+
+                    case "setFormation": {
+                        private _grp = groupFromNetId (_queryArg select 0);
+                        private _formation = _queryArg select 1;
+                        if (!isNull _grp) then {
+                            _grp setFormation _formation;
+                            _queryResult = true;
+                        } else {
+                            _queryResult = false;
+                        };
+                    };
+
+                    case "commandMove": {
+                        private _netIds = _queryArg select 0;
+                        private _pos = _queryArg select 1;
+                        if (count _pos == 2) then {
+                            _pos = [_pos select 0, _pos select 1, getTerrainHeightASL _pos];
+                        };
+                        private _units = [];
+                        {
+                            private _u = objectFromNetId _x;
+                            if (!isNull _u) then { _units pushBack _u; };
+                        } forEach _netIds;
+
+                        if (count _units > 0) then {
+                            _units commandMove _pos;
+                            _queryResult = true;
+                        } else {
+                            _queryResult = false;
+                        };
+                    };
+
                     default {
                         _queryResult = "ERROR: Unknown Command";
                     };

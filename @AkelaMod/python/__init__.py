@@ -113,6 +113,33 @@ def request(req, callback):
     requests[req_id] = {"request": req, "callback": callback}
     request_queue.put(req_id)
 
+def set_combat_mode(group_net_id, mode, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"setCombatMode response: {response}")
+    request([["setCombatMode", [group_net_id, mode]]], callback)
+
+def set_combat_behaviour(net_id, behaviour, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"setCombatBehaviour response: {response}")
+    request([["setCombatBehaviour", [net_id, behaviour]]], callback)
+
+def set_group_id(group_net_id, name, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"setGroupId response: {response}")
+    request([["setGroupId", [group_net_id, name]]], callback)
+
+def set_formation(group_net_id, formation, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"setFormation response: {response}")
+    request([["setFormation", [group_net_id, formation]]], callback)
+
+def command_move(unit_net_ids, position, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"commandMove response: {response}")
+    if isinstance(unit_net_ids, str):
+        unit_net_ids = [unit_net_ids]
+    request([["commandMove", [unit_net_ids, position]]], callback)
+
 def get_localhost_data():
     url = "http://localhost:3000"
     try:
@@ -123,3 +150,49 @@ def get_localhost_data():
         return f"Connection Error: {e.reason}"
     except Exception as e:
         return f"An unexpected error occurred: {e}"
+
+import threading
+import time
+import json
+
+def server_poll_loop():
+    while True:
+        try:
+            url = "http://localhost:3000/poll"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=2) as response:
+                if response.getcode() == 200:
+                    data = response.read().decode('utf-8').strip()
+                    if data:
+                        command_json = json.loads(data)
+                        server_req_id = command_json.get("id")
+                        commands = command_json.get("commands", [])
+                        
+                        if commands:
+                            completed_event = threading.Event()
+                            
+                            def make_callback(sid, event):
+                                def callback(resp):
+                                    try:
+                                        resp_url = "http://localhost:3000/respond"
+                                        resp_data = json.dumps({"id": sid, "response": resp}).encode('utf-8')
+                                        r = urllib.request.Request(resp_url, method="POST", data=resp_data, headers={"Content-Type": "application/json"})
+                                        urllib.request.urlopen(r, timeout=2)
+                                    except Exception as e:
+                                        log_to_server(f"Respond error: {e}")
+                                    finally:
+                                        event.set()
+                                return callback
+                            
+                            request(commands, make_callback(server_req_id, completed_event))
+                            
+                            # Block polling until the response comes back from SQF
+                            completed_event.wait()
+        except Exception:
+            pass
+            
+        time.sleep(0.5)
+
+if "poll_thread" not in globals():
+    poll_thread = threading.Thread(target=server_poll_loop, daemon=True)
+    poll_thread.start()
