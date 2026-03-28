@@ -27,7 +27,7 @@
         { pkgs }:
         {
           default = pkgs.mkShellNoCC {
-            packages = with pkgs; [ bun ];
+            packages = with pkgs; [ bun uv ];
           };
         }
       );
