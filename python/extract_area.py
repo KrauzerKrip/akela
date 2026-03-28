@@ -38,16 +38,16 @@ def add_features(ax, min_x, max_x, min_y, max_y, data_dir):
             elif geom.get('type') == 'MultiPolygon':
                 for p in coords: forest_polys.append(p[0])
     if forest_polys:
-        ax.add_collection(PolyCollection(forest_polys, facecolors='forestgreen', alpha=0.35, edgecolors='none'))
+        ax.add_collection(PolyCollection(forest_polys, facecolors='forestgreen', alpha=0.35, edgecolors='none', zorder=3))
         
-    # 2. Roads
+    # 2. Roads - All styled Cyan for highly saturated AI visibility
     road_files = [
-        ('roads/main_road.geojson.gz', '#FFD700', 3.0, '-'),         # gold
-        ('roads/main_road-bridge.geojson.gz', '#DAA520', 3.0, '-'),  # goldenrod
-        ('roads/road.geojson.gz', '#FFA500', 2.0, '-'),              # orange
-        ('roads/road-bridge.geojson.gz', '#CD853F', 2.0, '-'),       # peru
-        ('roads/track.geojson.gz', '#8B4513', 1.0, '--'),            # saddlebrown
-        ('roads/track-bridge.geojson.gz', '#A0522D', 1.0, '--'),     # sienna
+        ('roads/main_road.geojson.gz', 'cyan', 3.0, '-'),
+        ('roads/main_road-bridge.geojson.gz', 'cyan', 3.0, '-'),
+        ('roads/road.geojson.gz', 'cyan', 2.0, '-'),
+        ('roads/road-bridge.geojson.gz', 'cyan', 2.0, '-'),
+        ('roads/track.geojson.gz', 'cyan', 1.0, '--'),
+        ('roads/track-bridge.geojson.gz', 'cyan', 1.0, '--'),
     ]
     for rfile, color, lw, ls in road_files:
         rdata = load_gz(os.path.join(data_dir, rfile))
@@ -61,27 +61,38 @@ def add_features(ax, min_x, max_x, min_y, max_y, data_dir):
                 elif geom.get('type') == 'MultiLineString':
                     lines.extend(coords)
         if lines:
-            ax.add_collection(LineCollection(lines, colors=color, linewidths=lw, linestyles=ls))
+            ax.add_collection(LineCollection(lines, colors=color, linewidths=lw, linestyles=ls, zorder=4))
 
-    # 3. Houses / Buildings
+    # 3. Houses / Buildings - Forced Bright Red for high locking contrast
     house_data = load_gz(os.path.join(data_dir, 'house.geojson.gz'))
     house_polys = []
-    house_colors = []
+    
+    hx, hy = [], [] # Centroids for target anchoring
     for f in house_data:
         geom = f.get('geometry', {})
         coords = geom.get('coordinates', [])
         if check_bbox(coords):
-            c = f.get('properties', {}).get('color', [200, 200, 200])
-            fc = [v/255.0 for v in c] + [0.8]
             if geom.get('type') == 'Polygon':
-                house_polys.append(coords[0])
-                house_colors.append(fc)
+                poly = coords[0]
+                house_polys.append(poly)
+                xs, ys = zip(*poly)
+                hx.append(sum(xs)/len(xs))
+                hy.append(sum(ys)/len(ys))
             elif geom.get('type') == 'MultiPolygon':
                 for p in coords:
-                    house_polys.append(p[0])
-                    house_colors.append(fc)
+                    poly = p[0]
+                    house_polys.append(poly)
+                    xs, ys = zip(*poly)
+                    hx.append(sum(xs)/len(xs))
+                    hy.append(sum(ys)/len(ys))
+                    
     if house_polys:
-        ax.add_collection(PolyCollection(house_polys, facecolors=house_colors, edgecolors='black', linewidths=0.5))
+        # Override native colors for Bright Red
+        red_fc = [1.0, 0.0, 0.0, 0.8]
+        ax.add_collection(PolyCollection(house_polys, facecolors=red_fc, edgecolors='white', linewidths=0.5, zorder=5))
+        
+        # Add a tiny + at exactly the center coordinate of every single building
+        ax.scatter(hx, hy, marker='+', color='white', s=15, zorder=6, linewidths=1.0)
 
 
 def main():
@@ -93,6 +104,7 @@ def main():
     parser.add_argument("--out", type=str, default="area_overlay.png", help="Output image file")
     parser.add_argument("--use-grid", action="store_true", help="Use tiles with grid overlay instead of raw satellite tiles")
     parser.add_argument("--no-features", action="store_true", help="Do not draw geojson features")
+    parser.add_argument("--no-sat", action="store_true", help="Do not draw background satellite image (primitives only)")
     args = parser.parse_args()
 
     max_map_size = 30720
@@ -127,23 +139,25 @@ def main():
         print("Error: Area dimensions must be highly positive.")
         return
 
-    sat_crop = Image.new('RGB', (crop_width, crop_height))
-    
-    print("Combining satellite tiles...")
-    for c in range(col_start, col_end + 1):
-        for r in range(row_start, row_end + 1):
-            tile_path = os.path.join(sat_dir, str(c), f"{r}.png")
-            if os.path.exists(tile_path):
-                tile_img = Image.open(tile_path).convert('RGB')
-                paste_x = int(c * tile_size - min_x)
-                paste_y = int(r * tile_size - min_y)
-                sat_crop.paste(tile_img, (paste_x, paste_y))
-            else:
-                print(f"Warning: Tile {tile_path} missing.")
+    sat_crop = None
+    if not args.no_sat:
+        print("Combining satellite tiles...")
+        sat_crop = Image.new('RGB', (crop_width, crop_height))
+        
+        for c in range(col_start, col_end + 1):
+            for r in range(row_start, row_end + 1):
+                tile_path = os.path.join(sat_dir, str(c), f"{r}.png")
+                if os.path.exists(tile_path):
+                    tile_img = Image.open(tile_path).convert('RGB')
+                    paste_x = int(c * tile_size - min_x)
+                    paste_y = int(r * tile_size - min_y)
+                    sat_crop.paste(tile_img, (paste_x, paste_y))
+                else:
+                    print(f"Warning: Tile {tile_path} missing.")
 
-    print("Enhancing contrast and brightness...")
-    sat_crop = ImageEnhance.Contrast(sat_crop).enhance(1.4)
-    sat_crop = ImageEnhance.Brightness(sat_crop).enhance(1.3)
+        print("Enhancing contrast and brightness...")
+        sat_crop = ImageEnhance.Contrast(sat_crop).enhance(1.4)
+        sat_crop = ImageEnhance.Brightness(sat_crop).enhance(1.3)
 
     print("Loading DEM data for the bounding box...")
     with open(dem_path, 'r') as f:
@@ -187,7 +201,12 @@ def main():
         
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
     
-    ax.imshow(sat_crop, extent=[arma_min_x, arma_max_x, arma_min_y, arma_max_y])
+    # Bottom layer: Background image or purely black/gray background
+    if not args.no_sat and sat_crop is not None:
+        ax.imshow(sat_crop, extent=[arma_min_x, arma_max_x, arma_min_y, arma_max_y], zorder=0)
+    else:
+        # Default space color when no satellite is enabled purely drawing primitives
+        ax.set_facecolor('#1a1a1c')
     
     if not args.no_features:
         print("Overlaying GeoJSON features (Roads, Forests, Houses)...")
@@ -201,8 +220,10 @@ def main():
         if max_ele - min_ele > 1:
             levels = np.arange(0, max_ele + 20, 20)
             if len(levels) > 0:
-                cs = ax.contour(X, Y, dem_crop, levels=levels, colors='white', linewidths=1.5, alpha=0.9)
-                ax.clabel(cs, inline=True, fontsize=12, colors='white', fmt='%1.0fm')
+                # Contours slightly behind prominent structures or features like houses
+                cs = ax.contour(X, Y, dem_crop, levels=levels, colors='white', linewidths=1.0, alpha=0.9, zorder=2)
+                # Keep text high up to avoid getting fully hidden
+                ax.clabel(cs, inline=True, fontsize=12, colors='white', fmt='%1.0fm', zorder=10)
         else:
             print("Note: Very flat area, no contours drawn.")
 
@@ -230,8 +251,10 @@ def main():
     for spine in ax.spines.values():
         spine.set_edgecolor('white')
         spine.set_linewidth(2.0)
+        spine.set_zorder(15)
 
-    ax.grid(True, which='major', color='white', linestyle='-', linewidth=1.5, alpha=0.7)
+    # Put the Arma grid completely on top so labels/guidelines are never lost
+    ax.grid(True, which='major', color='white', linestyle='-', linewidth=1.5, alpha=0.7, zorder=11)
     
     fig.patch.set_facecolor('black')
     
