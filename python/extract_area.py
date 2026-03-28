@@ -3,7 +3,8 @@ import os
 import json
 import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image
+import matplotlib.ticker as ticker
+from PIL import Image, ImageEnhance
 
 def main():
     parser = argparse.ArgumentParser(description="Extract an area from Altis map and overlay contours.")
@@ -57,6 +58,10 @@ def main():
             else:
                 print(f"Warning: Tile {tile_path} missing.")
 
+    print("Enhancing contrast and brightness (optimizing for LLM visibility)...")
+    sat_crop = ImageEnhance.Contrast(sat_crop).enhance(1.4)
+    sat_crop = ImageEnhance.Brightness(sat_crop).enhance(1.3)
+
     # 2. Read DEM and crop
     print("Loading DEM data for the bounding box...")
     with open(dem_path, 'r') as f:
@@ -81,9 +86,6 @@ def main():
     dem_crop = np.atleast_2d(dem_crop)
     dem_crop = dem_crop[:, c_start:c_end]
     dem_crop[dem_crop == nodata] = np.nan
-    
-    # Replace all remaining nodata values that might not specifically match due to float interpretation
-    # -9999 or things extremely low usually indicate nodata in Arma
     dem_crop[dem_crop < -5000] = np.nan
 
     x_arr = np.arange(c_start, c_start + dem_crop.shape[1]) * cellsize
@@ -91,15 +93,16 @@ def main():
     X, Y = np.meshgrid(x_arr, y_arr)
 
     # 3. Plot overlay
-    print("Plotting overlay...")
+    print("Plotting overlay with contour and grids...")
     aspect = crop_height / crop_width
-    fig_w = 12
-    fig_h = 12 * aspect
+    fig_w = 14
+    fig_h = 14 * aspect
     
-    # Adjust DPI for output limits (capping around massive bounds)
     dpi = crop_width / fig_w
     if dpi > 300:
         dpi = 300
+    elif dpi < 100:
+        dpi = 100
         
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
     
@@ -110,21 +113,54 @@ def main():
     else:
         max_ele = np.nanmax(dem_crop)
         min_ele = np.nanmin(dem_crop)
-        # Avoid empty levels if elevation difference is too small
         if max_ele - min_ele > 1:
             levels = np.arange(0, max_ele + 20, 20)
             if len(levels) > 0:
-                cs = ax.contour(X, Y, dem_crop, levels=levels, colors='black', linewidths=0.5, alpha=0.6)
-                ax.clabel(cs, inline=True, fontsize=6)
+                # Bright white contours, thick lines for LLM readability
+                cs = ax.contour(X, Y, dem_crop, levels=levels, colors='white', linewidths=1.5, alpha=0.9)
+                ax.clabel(cs, inline=True, fontsize=12, colors='white', fmt='%1.0fm')
         else:
             print("Note: Very flat area, no contours drawn.")
 
     ax.set_xlim(min_x, max_x)
     ax.set_ylim(max_y, min_y)
-    ax.axis('off')
     
-    plt.tight_layout(pad=0)
-    plt.savefig(args.out, bbox_inches='tight', pad_inches=0)
+    # Grid step: 100m for micro regions, 1000m for regional maps
+    grid_step = 100 if (max_x - min_x) <= 2500 else 1000
+    
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(grid_step))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(grid_step))
+    
+    def format_x(val, pos):
+        return str(int(val // 100)).zfill(3)
+
+    def format_y(val, pos):
+        grid_y = 30720 - val
+        return str(int(grid_y // 100)).zfill(3)
+        
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_x))
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_y))
+    
+    # Ultra-readable grid settings
+    ax.tick_params(axis='both', colors='white', labelsize=16, 
+                   bottom=True, top=True, left=True, right=True,
+                   labelbottom=True, labeltop=True, labelleft=True, labelright=True)
+                   
+    ax.set_xlabel("Easting Coordinates (Arma XY)", color='white', fontsize=18, weight='bold', labelpad=15)
+    ax.set_ylabel("Northing Coordinates (Arma XY)", color='white', fontsize=18, weight='bold', labelpad=15)
+    
+    for spine in ax.spines.values():
+        spine.set_edgecolor('white')
+        spine.set_linewidth(2.0)
+
+    # Thick, slightly transparent white grid to clearly distinguish square blocks
+    ax.grid(True, which='major', color='white', linestyle='-', linewidth=1.5, alpha=0.7)
+    
+    # Set plot bounds facecolor black so text is highly visible
+    fig.patch.set_facecolor('black')
+    
+    plt.tight_layout(pad=3.0)
+    plt.savefig(args.out, bbox_inches='tight', facecolor=fig.get_facecolor(), pad_inches=0.2)
     print(f"Extraction complete! Saved image to {args.out}")
 
 if __name__ == "__main__":
