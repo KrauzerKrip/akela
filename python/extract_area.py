@@ -8,25 +8,33 @@ from PIL import Image, ImageEnhance
 
 def main():
     parser = argparse.ArgumentParser(description="Extract an area from Altis map and overlay contours.")
-    parser.add_argument("x1", type=float, help="X coordinate of first point (in meters)")
-    parser.add_argument("y1", type=float, help="Y coordinate of first point (in meters)")
-    parser.add_argument("x2", type=float, help="X coordinate of second point (in meters)")
-    parser.add_argument("y2", type=float, help="Y coordinate of second point (in meters)")
+    parser.add_argument("x1", type=float, help="Arma X coordinate of first point (in meters)")
+    parser.add_argument("y1", type=float, help="Arma Y coordinate of first point (in meters)")
+    parser.add_argument("x2", type=float, help="Arma X coordinate of second point (in meters)")
+    parser.add_argument("y2", type=float, help="Arma Y coordinate of second point (in meters)")
     parser.add_argument("--out", type=str, default="area_overlay.png", help="Output image file")
     parser.add_argument("--use-grid", action="store_true", help="Use tiles with grid overlay instead of raw satellite tiles")
     args = parser.parse_args()
 
-    min_x, max_x = min(args.x1, args.x2), max(args.x1, args.x2)
-    min_y, max_y = min(args.y1, args.y2), max(args.y1, args.y2)
-
-    # Validate bounds
     max_map_size = 30720
-    min_x = max(0, min_x)
-    min_y = max(0, min_y)
-    max_x = min(max_map_size, max_x)
-    max_y = min(max_map_size, max_y)
 
-    print(f"Extracting area: X=[{min_x}, {max_x}], Y=[{min_y}, {max_y}]")
+    # User inputs are Arma coordinates where Y=0 is bottom and Y=30720 is top
+    arma_min_x, arma_max_x = min(args.x1, args.x2), max(args.x1, args.x2)
+    arma_min_y, arma_max_y = min(args.y1, args.y2), max(args.y1, args.y2)
+
+    arma_min_x = max(0, arma_min_x)
+    arma_min_y = max(0, arma_min_y)
+    arma_max_x = min(max_map_size, arma_max_x)
+    arma_max_y = min(max_map_size, arma_max_y)
+
+    print(f"Extracting area (Arma Coords): X=[{arma_min_x}, {arma_max_x}], Y=[{arma_min_y}, {arma_max_y}]")
+
+    # Map Arma coordinates to Image (Pixel) coordinates
+    # X matches directly. Y is inverted (Pixel Y=0 is top, Arma Y=30720 is top)
+    min_x = arma_min_x
+    max_x = arma_max_x
+    min_y = max_map_size - arma_max_y
+    max_y = max_map_size - arma_min_y
 
     data_dir = '../.data/altis'
     sat_dir = os.path.join(data_dir, 'sat_grid' if args.use_grid else 'sat')
@@ -73,7 +81,7 @@ def main():
     cellsize = headers['cellsize']
     nodata = headers['NODATA_value']
     
-    # Crop bounds for DEM
+    # Crop bounds for DEM (Pixel indices)
     r_start = max(0, int(min_y // cellsize))
     r_end = int(np.ceil(max_y / cellsize))
     c_start = max(0, int(min_x // cellsize))
@@ -88,9 +96,15 @@ def main():
     dem_crop[dem_crop == nodata] = np.nan
     dem_crop[dem_crop < -5000] = np.nan
 
+    # Map arrays to Arma coordinates
+    # x_arr matches pixel x
     x_arr = np.arange(c_start, c_start + dem_crop.shape[1]) * cellsize
-    y_arr = np.arange(r_start, r_start + dem_crop.shape[0]) * cellsize
-    X, Y = np.meshgrid(x_arr, y_arr)
+    # pixel_y_arr = top to bottom
+    pixel_y_arr = np.arange(r_start, r_start + dem_crop.shape[0]) * cellsize
+    # Convert pixel_y_arr to arma_y
+    y_arr_arma = max_map_size - pixel_y_arr
+    
+    X, Y = np.meshgrid(x_arr, y_arr_arma)
 
     # 3. Plot overlay
     print("Plotting overlay with contour and grids...")
@@ -106,7 +120,9 @@ def main():
         
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
     
-    ax.imshow(sat_crop, extent=[min_x, max_x, max_y, min_y])
+    # Now we plot cleanly in standard Cartesian (Arma format)
+    # the image top edge is arma_max_y, bottom edge is arma_min_y
+    ax.imshow(sat_crop, extent=[arma_min_x, arma_max_x, arma_min_y, arma_max_y])
     
     if np.all(np.isnan(dem_crop)):
         print("Note: No elevation data in this area.")
@@ -122,32 +138,29 @@ def main():
         else:
             print("Note: Very flat area, no contours drawn.")
 
-    ax.set_xlim(min_x, max_x)
-    ax.set_ylim(max_y, min_y)
+    ax.set_xlim(arma_min_x, arma_max_x)
+    ax.set_ylim(arma_min_y, arma_max_y)
     
     # Grid step: 100m for micro regions, 1000m for regional maps
-    grid_step = 100 if (max_x - min_x) <= 2500 else 1000
+    grid_step = 100 if (arma_max_x - arma_min_x) <= 2500 else 1000
     
     ax.xaxis.set_major_locator(ticker.MultipleLocator(grid_step))
     ax.yaxis.set_major_locator(ticker.MultipleLocator(grid_step))
     
-    def format_x(val, pos):
+    def format_coord(val, pos):
+        # Format "000" for grids in meters
         return str(int(val // 100)).zfill(3)
 
-    def format_y(val, pos):
-        grid_y = 30720 - val
-        return str(int(grid_y // 100)).zfill(3)
-        
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_x))
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_y))
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_coord))
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_coord))
     
     # Ultra-readable grid settings
     ax.tick_params(axis='both', colors='white', labelsize=16, 
                    bottom=True, top=True, left=True, right=True,
                    labelbottom=True, labeltop=True, labelleft=True, labelright=True)
                    
-    ax.set_xlabel("Easting Coordinates (Arma XY)", color='white', fontsize=18, weight='bold', labelpad=15)
-    ax.set_ylabel("Northing Coordinates (Arma XY)", color='white', fontsize=18, weight='bold', labelpad=15)
+    ax.set_xlabel("Easting (Arma XYZ)", color='white', fontsize=18, weight='bold', labelpad=15)
+    ax.set_ylabel("Northing (Arma XYZ)", color='white', fontsize=18, weight='bold', labelpad=15)
     
     for spine in ax.spines.values():
         spine.set_edgecolor('white')
