@@ -227,6 +227,7 @@ def main():
 
     ax.set_xlim(arma_min_x, arma_max_x)
     ax.set_ylim(arma_min_y, arma_max_y)
+    ax.set_aspect('equal')
     
     grid_step = 100 if (arma_max_x - arma_min_x) <= 2500 else 1000
     
