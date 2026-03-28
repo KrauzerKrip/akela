@@ -6,9 +6,11 @@
     "dev": "bun run --watch src/index.ts"
   },
   "dependencies": {
+    "@google/adk": "^0.6.0",
     "elysia": "latest"
   },
   "devDependencies": {
+    "@google/adk-devtools": "^0.6.0",
     "bun-types": "latest"
   },
   "module": "src/index.js"

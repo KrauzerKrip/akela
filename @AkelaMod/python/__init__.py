@@ -140,6 +140,11 @@ def command_move(unit_net_ids, position, callback=None):
         unit_net_ids = [unit_net_ids]
     request([["commandMove", [unit_net_ids, position]]], callback)
 
+def get_group_assigned_vehicles(group_net_id, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"get_group_assigned_vehicles response: {response}")
+    request([["get_group_assigned_vehicles", group_net_id]], callback)
+
 def get_localhost_data():
     url = "http://localhost:3000"
     try:

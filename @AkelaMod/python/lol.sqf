@@ -151,6 +151,19 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
+                    case "get_group_assigned_vehicles": {
+                        private _grp = groupFromNetId _queryArg;
+                        if (!isNull _grp) then {
+                            private _vehArr = [];
+                            {
+                                _vehArr pushBack [netId _x, typeOf _x];
+                            } forEach (assignedVehicles _grp);
+                            _queryResult = _vehArr;
+                        } else {
+                            _queryResult = ["error", "Group not found or is null"];
+                        };
+                    };
+
                     default {
                         _queryResult = "ERROR: Unknown Command";
                     };
