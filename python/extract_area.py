@@ -5,6 +5,8 @@ import gzip
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 from matplotlib.collections import PolyCollection, LineCollection
 from PIL import Image, ImageEnhance
 
@@ -90,7 +92,6 @@ def add_features(ax, min_x, max_x, min_y, max_y, data_dir):
         # Override native colors for Bright Red
         red_fc = [1.0, 0.0, 0.0, 0.8]
         ax.add_collection(PolyCollection(house_polys, facecolors=red_fc, edgecolors='white', linewidths=0.5, zorder=5))
-        
         # Add a tiny + at exactly the center coordinate of every single building
         ax.scatter(hx, hy, marker='+', color='white', s=15, zorder=6, linewidths=1.0)
 
@@ -201,18 +202,17 @@ def main():
         
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
     
-    # Bottom layer: Background image or purely black/gray background
     if not args.no_sat and sat_crop is not None:
         ax.imshow(sat_crop, extent=[arma_min_x, arma_max_x, arma_min_y, arma_max_y], zorder=0)
     else:
-        # Default space color when no satellite is enabled purely drawing primitives
         ax.set_facecolor('#1a1a1c')
     
     if not args.no_features:
         print("Overlaying GeoJSON features (Roads, Forests, Houses)...")
         add_features(ax, arma_min_x, arma_max_x, arma_min_y, arma_max_y, data_dir)
 
-    if np.all(np.isnan(dem_crop)):
+    has_elevations = not np.all(np.isnan(dem_crop))
+    if not has_elevations:
         print("Note: No elevation data in this area.")
     else:
         max_ele = np.nanmax(dem_crop)
@@ -220,9 +220,7 @@ def main():
         if max_ele - min_ele > 1:
             levels = np.arange(0, max_ele + 20, 20)
             if len(levels) > 0:
-                # Contours slightly behind prominent structures or features like houses
                 cs = ax.contour(X, Y, dem_crop, levels=levels, colors='white', linewidths=1.0, alpha=0.9, zorder=2)
-                # Keep text high up to avoid getting fully hidden
                 ax.clabel(cs, inline=True, fontsize=12, colors='white', fmt='%1.0fm', zorder=10)
         else:
             print("Note: Very flat area, no contours drawn.")
@@ -253,9 +251,29 @@ def main():
         spine.set_linewidth(2.0)
         spine.set_zorder(15)
 
-    # Put the Arma grid completely on top so labels/guidelines are never lost
     ax.grid(True, which='major', color='white', linestyle='-', linewidth=1.5, alpha=0.7, zorder=11)
     
+    # ---------------------------------------------------------
+    # Legend construction
+    legend_elements = []
+    if not args.no_features:
+        legend_elements.extend([
+            mpatches.Patch(facecolor=[1.0, 0.0, 0.0, 0.8], edgecolor='white', label='Building'),
+            mlines.Line2D([0], [0], marker='+', color='w', markerfacecolor='w', markersize=8, linestyle='None', label='Building Center'),
+            mlines.Line2D([0], [0], color='cyan', lw=2, label='Road / Track'),
+            mpatches.Patch(facecolor='forestgreen', alpha=0.35, edgecolor='none', label='Forest / Brush')
+        ])
+    
+    if has_elevations:
+        legend_elements.append(mlines.Line2D([0], [0], color='white', lw=1.0, label='Elevation Contour (20m)'))
+        
+    legend_elements.append(mlines.Line2D([0], [0], color='white', lw=1.5, linestyle='-', alpha=0.7, label='Arma Coordinates Grid'))
+    
+    if legend_elements:
+        leg = ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.055, 1), facecolor='black', edgecolor='white', labelcolor='white', fontsize=14, framealpha=0.85)
+        leg.set_zorder(20)
+    # ---------------------------------------------------------
+
     fig.patch.set_facecolor('black')
     
     plt.tight_layout(pad=3.0)
