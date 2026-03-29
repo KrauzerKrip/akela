@@ -1,0 +1,42 @@
+import { OrderSandbox } from "./sandbox";
+import { Army, Group, taskQueue, GameExecutor, Waypoint } from "../army";
+import * as fs from "fs";
+import * as path from "path";
+
+class DummyExecutor implements GameExecutor {
+    async addWaypoint(group: Group, waypoint: Waypoint) {
+        console.log(`[Executor] addWaypoint to ${group.getName()}: (${waypoint.position.x}, ${waypoint.position.y})`);
+    }
+    async getGroupAssignedVehicles(group: Group) { return []; }
+    async setCombatMode(group: Group, mode: string) {
+        console.log(`[Executor] setCombatMode for ${group.getName()}: ${mode}`);
+    }
+    async setCombatBehaviour(group: Group, behaviour: string) { }
+    async setGroupId(group: Group, name: string) { }
+    async setFormation(group: Group, formation: string) { }
+}
+
+async function test() {
+    console.log("Setting up Army...");
+    const army = new Army("WEST");
+    army.addGroup(new Group("alpha-id", "Alpha"));
+    army.addGroup(new Group("bravo-id", "Bravo"));
+
+    const executor = new DummyExecutor();
+    const sandbox = new OrderSandbox();
+
+    console.log("Reading example.js...");
+    const code = fs.readFileSync(path.join(import.meta.dir, "example.js"), 'utf-8');
+
+    console.log("Executing script...");
+    sandbox.executeScript(code, army, executor);
+
+    console.log("--- Execution Results ---");
+    console.log("taskQueue length:", taskQueue.length);
+    if (taskQueue.length > 0) {
+        console.log("Task in queue type:", (taskQueue[0] as any).constructor.name);
+        console.log("Assigned group ID:", (taskQueue[0] as any).group.id);
+    }
+}
+
+test().catch(console.error);

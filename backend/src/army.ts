@@ -125,6 +125,36 @@ export class Push extends Task {
     }
 }
 
+export class Assault extends Task {
+    private waypoints: Waypoint[];
+
+    constructor(id: string, group: Group, waypoints: Waypoint[]) {
+        super(id, group);
+        this.waypoints = waypoints;
+    }
+
+    public async execute(executor: GameExecutor): Promise<void> {
+        for (const wp of this.waypoints) {
+            executor.addWaypoint(this.group, wp);
+            executor.setCombatMode(this.group, "RED");
+        }
+    }
+
+    public static fromWaypoints(group: Group, waypoints: Waypoint[]) {
+        return new Assault(uuidv4(), group, waypoints);
+    }
+}
+
+export const taskQueue: Task[] = [];
+
+export function addTaskToQueue(task: Task) {
+    taskQueue.push(task);
+}
+
+export function executeImmediately(task: Task, executor: GameExecutor) {
+    task.execute(executor);
+}
+
 export class Group {
     public readonly id: string;
     private name: string;
@@ -166,5 +196,9 @@ export class Army {
     public addGroup(group: Group) {
         this.groups.push(group);
         this.groupById[group.id] = group;
+    }
+
+    public getGroupById(id: string): Group | undefined {
+        return this.groupById[id];
     }
 }
