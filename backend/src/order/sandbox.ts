@@ -18,6 +18,9 @@ export class OrderSandbox {
 
         const arena = new Arena(vm, { isMarshalable: "auto" });
 
+        // QuickJS doesn't have 'global' out of the box, map it to globalThis
+        arena.evalCode(`globalThis.global = globalThis;`);
+
         // Load bootstrap
         const bootstrapCode = fs.readFileSync(path.join(import.meta.dir, 'bootstrap.js'), 'utf8');
         arena.evalCode(bootstrapCode);
