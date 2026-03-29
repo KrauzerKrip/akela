@@ -172,6 +172,10 @@ export class Group {
         this.waypointList = new WaypointList();
     }
 
+    public getName(): string {
+        return this.name;
+    }
+
     public getCurrentWaypoint(): Waypoint | null {
         const head = this.waypointList.getHead();
         if (head) {

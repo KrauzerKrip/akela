@@ -10,8 +10,7 @@ global.Push = class {
         this.reactions = {};
     }
     addReaction(event, cb) {
-        // We store the callback as a reference to be called later
-        this.reactions[event] = new ivm.Reference(cb);
+        this.reactions[event] = cb;
     }
     assign(team) {
         this.assignedTeamId = team.id;
@@ -25,7 +24,7 @@ global.Assault = class {
         this.reactions = {};
     }
     addReaction(event, cb) {
-        this.reactions[event] = new ivm.Reference(cb);
+        this.reactions[event] = cb;
     }
     assign(team) {
         this.assignedTeamId = team.id;
@@ -46,13 +45,13 @@ global.teams = {};
 
 global.addTaskToQueue = function (task) {
     if (global._addTaskCallback) {
-        global._addTaskCallback.applySync(undefined, [new ivm.Reference(task)]);
+        global._addTaskCallback(task);
     }
 };
 
 global.executeImmediately = function (task) {
     if (global._executeCallback) {
-        global._executeCallback.applySync(undefined, [new ivm.Reference(task)]);
+        global._executeCallback(task);
     }
 };
 

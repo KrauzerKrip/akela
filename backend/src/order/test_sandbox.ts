@@ -23,7 +23,7 @@ async function test() {
     army.addGroup(new Group("bravo-id", "Bravo"));
 
     const executor = new DummyExecutor();
-    const sandbox = new OrderSandbox();
+    const sandbox = await OrderSandbox.create();
 
     console.log("Reading example.js...");
     const code = fs.readFileSync(path.join(import.meta.dir, "example.js"), 'utf-8');
@@ -37,6 +37,8 @@ async function test() {
         console.log("Task in queue type:", (taskQueue[0] as any).constructor.name);
         console.log("Assigned group ID:", (taskQueue[0] as any).group.id);
     }
+
+    sandbox.dispose();
 }
 
 test().catch(console.error);
