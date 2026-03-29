@@ -135,7 +135,7 @@ export class ArmaConnector implements GameExecutor {
     public async getGroupAssignedVehicles(group: Group): Promise<string[]> {
         const armaGroupNetId = this.getArmaGroupNetId(group.id);
         if (armaGroupNetId !== undefined) {
-            const result = await sendArmaRequest([["get_group_assigned_vehicles", armaGroupNetId]]);
+            const result = await sendArmaRequest([["getGroupAssignedVehicle", armaGroupNetId]]);
             return result[0]?.[2] ?? [];
         }
         return [];

@@ -151,7 +151,7 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
-                    case "get_group_assigned_vehicles": {
+                    case "getGroupAssignedVehicle": {
                         private _grp = groupFromNetId _queryArg;
                         if (!isNull _grp) then {
                             private _vehArr = [];

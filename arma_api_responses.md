@@ -133,14 +133,14 @@ Because a client can send multiple queries in a single HTTP polling request, the
     ]
     ```
 
-### 10. `get_group_assigned_vehicles`
+### 10. `getGroupAssignedVehicle`
 *   **Description**: Retrieves a list of vehicles assigned to a specified group.
 *   **Query Argument**: `string` (Group `netId`)
 *   **Returns (`queryResult`)**: `list[list[string, string]]` (A list of `[netId, vehicleClass/typeOf]` pairs). If the group is not found, returns `["error", "Group not found or is null"]`.
 *   **Example Response**:
     ```json
     [
-      "get_group_assigned_vehicles", 
+      "getGroupAssignedVehicle", 
       "0:289", 
       [
         ["0:3412", "B_MRAP_01_F"],

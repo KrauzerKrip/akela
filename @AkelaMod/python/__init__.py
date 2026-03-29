@@ -165,8 +165,8 @@ def command_move(unit_net_ids, position, callback=None):
 
 def get_group_assigned_vehicles(group_net_id, callback=None):
     if callback is None:
-        callback = lambda response: log_to_server(f"get_group_assigned_vehicles response: {response}")
-    request([["get_group_assigned_vehicles", group_net_id]], callback)
+        callback = lambda response: log_to_server(f"getGroupAssignedVehicle response: {response}")
+    request([["getGroupAssignedVehicle", group_net_id]], callback)
 
 def add_waypoint(group_net_id, center, radius=0, index=-1, name="", callback=None):
     if callback is None:
