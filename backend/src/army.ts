@@ -91,13 +91,9 @@ class WaypointList {
     }
 }
 
-export interface TaskAction {
-    type: string;
-    msg?: string;
-    [key: string]: any;
-}
 
-export type ReactionCallback = (event: string, team: any) => TaskAction | undefined;
+
+export type ReactionCallback = (event: string, team: any) => Task | undefined;
 
 export class Task {
     public readonly id: string;
@@ -111,7 +107,7 @@ export class Task {
         this.group = group;
     }
 
-    public triggerReaction(event: string, teamData: any): TaskAction | undefined {
+    public triggerReaction(event: string, teamData: any): Task | undefined {
         if (this.reactions[event]) {
             return this.reactions[event](event, teamData);
         }
@@ -159,6 +155,23 @@ export class Assault extends Task {
 
     public static fromWaypoints(group: Group, waypoints: Waypoint[]) {
         return new Assault(uuidv4(), group, waypoints);
+    }
+}
+
+export class Retreat extends Task {
+    public async execute(executor: GameExecutor): Promise<void> {
+        // Handle retreat logic
+    }
+}
+
+export class Report extends Task {
+    public readonly message: string;
+    constructor(id: string, group: Group, message: string) {
+        super(id, group);
+        this.message = message;
+    }
+    public async execute(executor: GameExecutor): Promise<void> {
+        console.log(`[REPORT] ${this.group.getName()}: ${this.message}`);
     }
 }
 

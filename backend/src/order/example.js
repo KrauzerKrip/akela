@@ -4,13 +4,13 @@ const taskA = new Push([{ x: 23.2, y: 52.8 }])
 const taskB = new Assault([{ x: 25.3, y: 53.3 }, { x: 26.4, y: 54.8 }])
 
 taskA.addReaction(Event.NEW_CONTACT, (event, team) => {
-    return new Action.Retreat();
+    return new Retreat();
 });
 taskA.addReaction(Event.KIA, (event, team) => {
     if (team.getCasualtyRatio() > 0.5) {
-        return new Action.Retreat();
+        return new Retreat();
     } else if (team.getCasualties() > 1) {
-        return new Action.Report({ message: "Team Alpha is taking casualites!" });
+        return new Report({ message: "Team Alpha is taking casualites!" });
     }
 });
 

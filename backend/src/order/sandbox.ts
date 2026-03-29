@@ -3,7 +3,7 @@ import { Arena } from "quickjs-emscripten-sync";
 import * as fs from "fs";
 import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
-import { Army, Group, Push, Assault, Task, Waypoint, GameExecutor, addTaskToQueue, executeImmediately } from "../army";
+import { Army, Group, Push, Assault, Retreat, Report, Task, Waypoint, GameExecutor, addTaskToQueue, executeImmediately } from "../army";
 
 export class OrderSandbox {
     private arena: Arena;
@@ -16,7 +16,7 @@ export class OrderSandbox {
         const QuickJS = await getQuickJS();
         const vm = QuickJS.newContext();
 
-        const arena = new Arena(vm, { isMarshalable: "auto" });
+        const arena = new Arena(vm, { isMarshalable: true });
 
         // QuickJS doesn't have 'global' out of the box, map it to globalThis
         arena.evalCode(`globalThis.global = globalThis;`);
@@ -28,26 +28,33 @@ export class OrderSandbox {
         return new OrderSandbox(arena);
     }
 
-    private translateTask(jsTask: any, getGroupById: (id: string) => Group | undefined): Task {
+    private translateTask(jsTask: any, getGroupById: (id: string) => Group | undefined, contextGroup?: Group): Task {
         const type = jsTask.type;
         const teamId = jsTask.assignedTeamId;
-        const group = getGroupById(teamId);
+        const group = (teamId ? getGroupById(teamId) : contextGroup);
         if (!group) {
-            throw new Error(`Group not found for teamId: ${teamId}`);
+            throw new Error(`Group not found for teamId: ${teamId} / type: ${type}`);
         }
-
-        const jsWaypoints: any[] = jsTask.waypoints;
-        const waypoints: Waypoint[] = jsWaypoints.map((wp: any) => ({
-            id: uuidv4(),
-            position: { x: wp.x, y: wp.y, z: 0 },
-            completionCallback: () => { }
-        }));
 
         let task: Task;
         if (type === 'PUSH') {
+            const waypoints = jsTask.waypoints.map((wp: any) => ({
+                id: uuidv4(),
+                position: { x: wp.x, y: wp.y, z: 0 },
+                completionCallback: () => { }
+            }));
             task = new Push(uuidv4(), group, waypoints);
         } else if (type === 'ASSAULT') {
+            const waypoints = jsTask.waypoints.map((wp: any) => ({
+                id: uuidv4(),
+                position: { x: wp.x, y: wp.y, z: 0 },
+                completionCallback: () => { }
+            }));
             task = new Assault(uuidv4(), group, waypoints);
+        } else if (type === 'RETREAT') {
+            task = new Retreat(uuidv4(), group);
+        } else if (type === 'REPORT') {
+            task = new Report(uuidv4(), group, jsTask.msg);
         } else {
             throw new Error(`Unknown task type: ${type}`);
         }
@@ -59,7 +66,7 @@ export class OrderSandbox {
                     const cb = jsReactions[eventName];
                     const result = cb(event, team);
                     if (result) {
-                        return { type: result.type, msg: result.msg };
+                        return this.translateTask(result, getGroupById, group);
                     }
                     return undefined;
                 };

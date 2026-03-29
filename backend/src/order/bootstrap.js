@@ -3,10 +3,9 @@
 
 global.Event = { NEW_CONTACT: 'NEW_CONTACT', KIA: 'KIA' };
 
-global.Push = class {
-    constructor(waypoints) {
-        this.type = 'PUSH';
-        this.waypoints = waypoints;
+class Task {
+    constructor(type) {
+        this.type = type;
         this.reactions = {};
     }
     addReaction(event, cb) {
@@ -14,20 +13,33 @@ global.Push = class {
     }
     assign(team) {
         this.assignedTeamId = team.id;
+    }
+}
+
+global.Push = class extends Task {
+    constructor(waypoints) {
+        super('PUSH');
+        this.waypoints = waypoints;
     }
 };
 
-global.Assault = class {
+global.Assault = class extends Task {
     constructor(waypoints) {
-        this.type = 'ASSAULT';
+        super('ASSAULT');
         this.waypoints = waypoints;
-        this.reactions = {};
     }
-    addReaction(event, cb) {
-        this.reactions[event] = cb;
+};
+
+global.Retreat = class extends Task {
+    constructor() {
+        super('RETREAT');
     }
-    assign(team) {
-        this.assignedTeamId = team.id;
+};
+
+global.Report = class extends Task {
+    constructor(data) {
+        super('REPORT');
+        this.msg = data.message;
     }
 };
 
@@ -53,9 +65,4 @@ global.executeImmediately = function (task) {
     if (global._executeCallback) {
         global._executeCallback(task);
     }
-};
-
-global.Action = {
-    Retreat: class { constructor() { this.type = 'RETREAT'; } },
-    Report: class { constructor(data) { this.type = 'REPORT'; this.msg = data.message; } }
 };
