@@ -6,12 +6,12 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-interface Point {
+export interface Point {
     x: number;
     y: number;
 }
 
-class GameMapArea {
+export class GameMapArea {
     public readonly leftBottomCorner: Point;
     public readonly rightTopCorner: Point;
     private readonly id: string;
@@ -38,7 +38,7 @@ class GameMapArea {
     }
 }
 
-class GameMap {
+export class GameMap {
 
     public async extractArea(leftBottomCorner: Point, rightTopCorner: Point): Promise<GameMapArea> {
         if (!process.env.BASE_AREA_DIR || !process.env.MAP_FILE_EXTENSION) {
