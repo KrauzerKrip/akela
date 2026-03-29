@@ -164,6 +164,34 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
+                    case "addWaypoint": {
+                        private _grp = groupFromNetId (_queryArg select 0);
+                        if (!isNull _grp) then {
+                            private _center = _queryArg select 1;
+                            private _radius = _queryArg select 2;
+                            private _index = _queryArg select 3;
+                            private _name = _queryArg select 4;
+                            private _wp = _grp addWaypoint [_center, _radius, _index, _name];
+                            _queryResult = [netId (_wp select 0), _wp select 1];
+                        } else {
+                            _queryResult = ["error", "Group not found or is null"];
+                        };
+                    };
+
+                    case "waypoints": {
+                        private _grp = groupFromNetId _queryArg;
+                        if (!isNull _grp) then {
+                            private _wps = waypoints _grp;
+                            private _ret = [];
+                            {
+                                _ret pushBack [netId (_x select 0), _x select 1];
+                            } forEach _wps;
+                            _queryResult = _ret;
+                        } else {
+                            _queryResult = ["error", "Group not found or is null"];
+                        };
+                    };
+
                     default {
                         _queryResult = "ERROR: Unknown Command";
                     };

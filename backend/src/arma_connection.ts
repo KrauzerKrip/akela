@@ -1,8 +1,8 @@
-import { Group, Task, Waypoint } from "./army";
+import { Group, Task, Unit, Waypoint } from "./army";
 import { GameExecutor } from "./army";
 import { sendArmaRequest } from "./index";
 
-export type NetId = number;
+export type NetId = string;
 
 export interface ArmaWaypoint {
     groupNetId: NetId;
@@ -99,15 +99,74 @@ export class ArmaConnector implements GameExecutor {
         const armaGroupNetId = this.getArmaGroupNetId(group.id);
         if (armaGroupNetId !== undefined) {
             const position = [waypoint.position.x, waypoint.position.y];
-            await sendArmaRequest([["addWaypoint", [armaGroupNetId, position]]]);
+            const result = await sendArmaRequest([["addWaypoint", [armaGroupNetId, position, 0, -1, waypoint.id]]]);
+
+            if (result && result[0] && Array.isArray(result[0][2])) {
+                const data = result[0][2];
+                if (data[0] !== "error") {
+                    this.registerWaypoint(waypoint.id, {
+                        groupNetId: data[0],
+                        index: data[1]
+                    });
+                }
+            }
             // @TODO completion callback
         }
+    }
+
+    public async getWaypoints(group: Group): Promise<ArmaWaypoint[]> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["waypoints", armaGroupNetId]]);
+            if (result && result[0] && Array.isArray(result[0][2])) {
+                const data = result[0][2];
+                if (data.length > 0 && data[0] === "error") {
+                    return [];
+                }
+                return data.map((wp: any[]) => ({
+                    groupNetId: wp[0],
+                    index: wp[1]
+                }));
+            }
+        }
+        return [];
     }
 
     public async getGroupAssignedVehicles(group: Group): Promise<string[]> {
         const armaGroupNetId = this.getArmaGroupNetId(group.id);
         if (armaGroupNetId !== undefined) {
             const result = await sendArmaRequest([["get_group_assigned_vehicles", armaGroupNetId]]);
+            return result[0]?.[2] ?? [];
+        }
+        return [];
+    }
+
+    public async getGroups(side: string): Promise<any[]> {
+        const result = await sendArmaRequest([["groups", side]]);
+        if (result && result[0] && Array.isArray(result[0][2])) {
+            return result[0][2];
+        }
+        return [];
+    }
+
+    public async getGroupUnits(group: Group): Promise<any[]> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["units", armaGroupNetId]]);
+            const data = result[0]?.[2];
+            if (Array.isArray(data) && data.length > 0 && data[0]?.[0] === "error") {
+                return [];
+            }
+            return data ?? [];
+        }
+        return [];
+    }
+
+
+    public async getUnitLoadout(unit: Unit): Promise<any[]> {
+        const armaUnitNetId = this.getArmaUnitNetId(unit.id);
+        if (armaUnitNetId !== undefined) {
+            const result = await sendArmaRequest([["getUnitLoadout", armaUnitNetId]]);
             return result[0]?.[2] ?? [];
         }
         return [];

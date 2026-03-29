@@ -113,6 +113,29 @@ def request(req, callback):
     requests[req_id] = {"request": req, "callback": callback}
     request_queue.put(req_id)
 
+def get_unit_loadout(unit_net_id, callback=None):
+    #	/* primary weapon */	["arifle_MXC_Holo_pointer_F", "", "acc_pointer_IR", "optic_Holosight", ["30Rnd_65x39_caseless_mag", 30], [], ""],
+	#/* secondary weapon */	["launch_B_Titan_short_F", "", "", "", ["Titan_AT", 1], [], ""],
+	#/* handgun weapon */	["hgun_P07_F", "", "", "", ["16Rnd_9x21_Mag", 16], [], ""],
+	#/* uniform */			["U_B_CombatUniform_mcam", [["FirstAidKit", 1], ["30Rnd_65x39_caseless_mag", 2, 30], ["Chemlight_green", 1, 1]]],
+	#/* vest */				["V_PlateCarrier1_rgr", [["30Rnd_65x39_caseless_mag", 3, 30], ["16Rnd_9x21_Mag", 2, 16], ["SmokeShell", 1 ,1], ["SmokeShellGreen", 1, 1], ["Chemlight_green", 1, 1]]],
+	#/* backpack */			["B_AssaultPack_mcamo_AT",[["Titan_AT", 2, 1]]],
+	#/* items */				"H_HelmetB_light_desert", "G_Bandanna_tan",[],
+	#/* items */				["ItemMap", "", "ItemRadio", "ItemCompass", "ItemWatch", "NVGoggles"]
+    if callback is None:
+        callback = lambda response: log_to_server(f"getUnitLoadout response: {response}")
+    request([["getUnitLoadout", unit_net_id]], callback)
+
+def get_groups(side, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"get_groups response: {response}")
+    request([["groups", side]], callback)
+
+def get_group_units(group_net_id, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"get_group_units response: {response}")
+    request([["units", group_net_id]], callback)
+
 def set_combat_mode(group_net_id, mode, callback=None):
     if callback is None:
         callback = lambda response: log_to_server(f"setCombatMode response: {response}")
@@ -144,6 +167,16 @@ def get_group_assigned_vehicles(group_net_id, callback=None):
     if callback is None:
         callback = lambda response: log_to_server(f"get_group_assigned_vehicles response: {response}")
     request([["get_group_assigned_vehicles", group_net_id]], callback)
+
+def add_waypoint(group_net_id, center, radius=0, index=-1, name="", callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"addWaypoint response: {response}")
+    request([["addWaypoint", [group_net_id, center, radius, index, name]]], callback)
+
+def get_waypoints(group_net_id, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"waypoints response: {response}")
+    request([["waypoints", group_net_id]], callback)
 
 def get_localhost_data():
     url = "http://localhost:3000"
