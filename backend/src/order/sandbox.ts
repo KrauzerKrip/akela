@@ -43,13 +43,29 @@ export class OrderSandbox {
             completionCallback: () => { }
         }));
 
+        let task: Task;
         if (type === 'PUSH') {
-            return new Push(uuidv4(), group, waypoints);
+            task = new Push(uuidv4(), group, waypoints);
         } else if (type === 'ASSAULT') {
-            return new Assault(uuidv4(), group, waypoints);
+            task = new Assault(uuidv4(), group, waypoints);
         } else {
             throw new Error(`Unknown task type: ${type}`);
         }
+
+        const jsReactions = jsTask.reactions;
+        if (jsReactions) {
+            for (const eventName of Object.keys(jsReactions)) {
+                task.reactions[eventName] = (event: string, team: any) => {
+                    const cb = jsReactions[eventName];
+                    const result = cb(event, team);
+                    if (result) {
+                        return { type: result.type, msg: result.msg };
+                    }
+                    return undefined;
+                };
+            }
+        }
+        return task;
     }
 
     public executeScript(code: string, army: Army, executor: GameExecutor) {

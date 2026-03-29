@@ -91,14 +91,31 @@ class WaypointList {
     }
 }
 
+export interface TaskAction {
+    type: string;
+    msg?: string;
+    [key: string]: any;
+}
+
+export type ReactionCallback = (event: string, team: any) => TaskAction | undefined;
+
 export class Task {
     public readonly id: string;
     protected readonly group: Group;
+    public reactions: Record<string, ReactionCallback> = {};
+
     public async execute(executor: GameExecutor): Promise<void> { }
 
     constructor(id: string, group: Group) {
         this.id = id;
         this.group = group;
+    }
+
+    public triggerReaction(event: string, teamData: any): TaskAction | undefined {
+        if (this.reactions[event]) {
+            return this.reactions[event](event, teamData);
+        }
+        return undefined;
     }
 
     public static createForGroup(group: Group) {

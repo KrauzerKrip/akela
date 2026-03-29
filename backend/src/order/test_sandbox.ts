@@ -36,9 +36,14 @@ async function test() {
     if (taskQueue.length > 0) {
         console.log("Task in queue type:", (taskQueue[0] as any).constructor.name);
         console.log("Assigned group ID:", (taskQueue[0] as any).group.id);
-    }
 
-    sandbox.dispose();
+        const reactionResult = taskQueue[0].triggerReaction('KIA', {
+            getCasualtyRatio: () => 0.6,
+            getCasualties: () => 2
+        });
+        console.log("Simulating KIA event with >0.5 casualties...");
+        console.log("Reaction Action:", reactionResult);
+    }
 }
 
 test().catch(console.error);
