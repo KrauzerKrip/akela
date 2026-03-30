@@ -1,4 +1,4 @@
-import { Group, Task, Unit, Waypoint } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event } from "./army";
 import { GameExecutor } from "./army";
 import { sendArmaRequest } from "./index";
 
@@ -12,21 +12,51 @@ export interface ArmaWaypoint {
 type CompositeWaypointKey = `${NetId}-${number}`;
 
 
-export class ArmaConnector implements GameExecutor {
+export class ArmaConnector implements GameExecutor, GameEventDispatcher {
     private armaWaypoints: Record<string, ArmaWaypoint>;
     private armaObjects: Record<string, NetId>;
     private armaGroups: Record<string, NetId>;
     private waypointIds: Record<CompositeWaypointKey, string>;
     private objectIds: Record<NetId, string>;
-    private groupIds: Record<NetId, string>
+    private groupIds: Record<NetId, string>;
+    private eventHandlers: Record<string, ((event: any) => void)[]>;
 
     constructor() {
         this.armaWaypoints = {};
         this.armaObjects = {};
         this.armaGroups = {};
         this.waypointIds = {};
-        this.objectIds = {}
+        this.objectIds = {};
         this.groupIds = {};
+        this.eventHandlers = {};
+    }
+
+    public addHandler<EventType extends Event>(eventType: string, callback: (event: EventType) => void): void {
+        if (!this.eventHandlers[eventType]) {
+            this.eventHandlers[eventType] = [];
+        }
+        this.eventHandlers[eventType].push(callback as (event: any) => void);
+    }
+
+    public fireEvent(event: Event): void {
+        const handlers = this.eventHandlers[event.type];
+        if (handlers) {
+            for (const handler of handlers) {
+                handler(event);
+            }
+        }
+    }
+
+    public processRawEvent(eventName: string, params: any): void {
+        const parsedEvent = this.parseArmaEvent(eventName, params);
+        if (parsedEvent) {
+            this.fireEvent(parsedEvent);
+        }
+    }
+
+    private parseArmaEvent(eventName: string, params: any): Event | null {
+        // @TODO: Implement conversion from raw Arma 3 event to internal Event model
+        return null;
     }
 
     public registerUnit(id: string, netId: NetId): void {
@@ -204,4 +234,6 @@ export class ArmaConnector implements GameExecutor {
         // double-dispatch!!!
         task.execute(this);
     }
+
+
 }

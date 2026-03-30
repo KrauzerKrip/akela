@@ -1,6 +1,36 @@
 import { Point } from "./geography";
 import { v4 as uuidv4 } from 'uuid';
 
+export interface Event {
+    type: string;
+}
+
+export interface UnitKilledEvent extends Event {
+    type: "UNIT_KILLED";
+    group: Group;
+    unit: Unit,
+    waypoint: Waypoint;
+}
+
+export interface EnemyDetectedEvent extends Event {
+    type: "WAYPOINT_COMPLETE";
+    group: Group;
+    waypoint: Waypoint;
+}
+
+
+export interface WaypointCompleteEvent extends Event {
+    type: "WAYPOINT_COMPLETE";
+    group: Group;
+    waypoint: Waypoint;
+}
+
+export interface CombatModeChangedEvent extends Event {
+    type: "COMBAT_MODE_CHANGED";
+    group: Group,
+    newMode: string;
+}
+
 export interface GameExecutor {
     addWaypoint(group: Group, waypoint: Waypoint): Promise<void>;
     getGroupAssignedVehicles(group: Group): Promise<string[]>;
@@ -10,6 +40,9 @@ export interface GameExecutor {
     setFormation(group: Group, formation: string): Promise<void>;
 }
 
+export interface GameEventDispatcher {
+    addHandler<EventType extends Event>(eventType: string, callback: (event: EventType) => void): void;
+}
 
 export interface Weapon {
     base: string | null;

@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { ArmaConnector } from "./arma_connection";
 
 interface PendingRequest {
   id: string;
@@ -9,6 +10,9 @@ interface PendingRequest {
 
 const pendingRequests = new Map<string, PendingRequest>();
 const requestQueue: PendingRequest[] = [];
+
+export const armaConnector = new ArmaConnector();
+
 
 
 
@@ -75,6 +79,16 @@ const app = new Elysia()
       }),
     }
   )
+  .post("/new-event", async ({ body }) => {
+    armaConnector.processRawEvent(body.event, body.params);
+    return { status: "received" };
+  },
+    {
+      body: t.Object({
+        event: t.String(),
+        params: t.Any(),
+      }),
+    })
   .listen(3000);
 
 console.log(
