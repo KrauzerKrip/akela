@@ -191,7 +191,31 @@ scriptName "Pythia_Polling_Loop";
                             _queryResult = ["error", "Group not found or is null"];
                         };
                     };
-
+                    case "addEventHandlers": {
+                        private _grp = groupFromNetId _queryArg;
+                        if (!isNull _grp) then {
+                            _grp addEventHandler ["CombatModeChanged", {
+                                params ["_group", "_newMode"];
+                                ["AkelaMod.on_event", ["CombatModeChanged", [netId _group, _newMode]]] call py3_fnc_callExtension;
+                            }];
+                            _grp addEventHandler ["UnitKilled", {
+                                params ["_group", "_unit", "_killer", "_instigator", "_useEffects"];
+                                ["AkelaMod.on_event", ["UnitKilled", [netId _group, netId _unit, netId _killer, netId _instigator, _useEffects]]] call py3_fnc_callExtension;
+                            }];
+                            _grp addEventHandler ["WaypointComplete", {
+                                params ["_group", "_waypointIndex"];
+                                ["AkelaMod.on_event", ["WaypointComplete", [netId _group, _waypointIndex]]] call py3_fnc_callExtension;
+                            }];
+                            _grp addEventHandler ["EnemyDetected", {
+                                params ["_group", "_newTarget"];
+                                ["AkelaMod.on_event", ["EnemyDetected", [netId _group, netId _newTarget]]] call py3_fnc_callExtension;
+                            }];
+                            _queryResult = true;
+                        } else {
+                            _queryResult = ["error", "Group not found or is null"];
+                        };
+                    };
+ 
                     default {
                         _queryResult = "ERROR: Unknown Command";
                     };

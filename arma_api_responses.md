@@ -178,6 +178,41 @@ Because a client can send multiple queries in a single HTTP polling request, the
     ]
     ```
 
+### 13. `addEventHandlers`
+*   **Description**: Attaches several group-level event handlers (`CombatModeChanged`, `UnitKilled`, `WaypointComplete`, `EnemyDetected`) to the specified group. When triggered, these invoke `AkelaMod.on_event` to push payloads asynchronously back to the backend.
+*   **Query Argument**: `string` (Group `netId`)
+*   **Returns (`queryResult`)**: `boolean` (`true` if the group was found and event handlers were added). If the group is not found, returns `["error", "Group not found or is null"]`.
+*   **Example Response**:
+    ```json
+    [
+      "addEventHandlers", 
+      "0:289", 
+      true
+    ]
+    ```
+
+---
+
+## Arma to Backend Events (Server Callbacks)
+
+These events are pushed asynchronously from the Arma 3 environment directly to the backend HTTP server (`/new-event` endpoint) when triggered. The payload is sent as JSON in the format: `{"event": "EventName", "params": [...]}`.
+
+### 1. `CombatModeChanged`
+*   **Description**: Triggers when the group's behaviour or combat mode changes.
+*   **Params**: `[string, string]` (`[group_netId, newMode]`)
+
+### 2. `UnitKilled`
+*   **Description**: Triggered when a unit in the group is killed.
+*   **Params**: `[string, string, string, string, boolean]` (`[group_netId, unit_netId, killer_netId, instigator_netId, useEffects]`). Note: netIds for dead/null objects may return as empty strings `""`.
+
+### 3. `WaypointComplete`
+*   **Description**: Triggered when the group completes a waypoint.
+*   **Params**: `[string, number]` (`[group_netId, waypointIndex]`)
+
+### 4. `EnemyDetected`
+*   **Description**: Triggered when the group detects a new enemy target.
+*   **Params**: `[string, string]` (`[group_netId, newTarget_netId]`)
+
 ### Unknown Command Fallback
 If an unsupported `queryType` is passed to SQF via Python, it returns a literal error string message.
 *   **Description**: Catch-all for unresolved or mistyped queries.

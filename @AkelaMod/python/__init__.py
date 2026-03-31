@@ -49,6 +49,18 @@ def pollRequest():
     except Empty:
         return []
 
+def on_event(event_name, params):
+    try:
+        import json
+        import urllib.request
+        url = "http://localhost:3000/new-event"
+        data = json.dumps({"event": event_name, "params": params}).encode('utf-8')
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=2) as response:
+            pass
+    except Exception as e:
+        log_to_server(f"Event error: {e}")
+
 def test_ammo_chain(*args):
     # Step 1: Request all BLUFOR groups
     log_to_server("Pythia: Starting ammo test, requesting BLUFOR groups...")
@@ -177,6 +189,11 @@ def get_waypoints(group_net_id, callback=None):
     if callback is None:
         callback = lambda response: log_to_server(f"waypoints response: {response}")
     request([["waypoints", group_net_id]], callback)
+
+def add_event_handlers(group_net_id, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"addEventHandlers response: {response}")
+    request([["addEventHandlers", group_net_id]], callback)
 
 def get_localhost_data():
     url = "http://localhost:3000"
