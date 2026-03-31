@@ -1,4 +1,4 @@
-import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent } from "./army";
 import { GameExecutor } from "./army";
 import { sendArmaRequest } from "./index";
 
@@ -55,7 +55,53 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
     }
 
     private parseArmaEvent(eventName: string, params: any): Event | null {
-        // @TODO: Implement conversion from raw Arma 3 event to internal Event model
+        if (!Array.isArray(params) || params.length === 0) return null;
+
+        const groupNetId = params[0];
+        const groupId = this.getGroupId(groupNetId);
+        if (!groupId) return null;
+
+        const group = { id: groupId } as unknown as Group;
+
+        switch (eventName) {
+            case "CombatModeChanged": {
+                return {
+                    type: "COMBAT_MODE_CHANGED",
+                    group,
+                    newMode: params[1]
+                } as CombatModeChangedEvent;
+            }
+            case "UnitKilled": {
+                const unitId = this.getUnitId(params[1]);
+
+                return {
+                    type: "UNIT_KILLED",
+                    group,
+                    unit: { id: unitId ?? "unknown" } as unknown as Unit,
+                } as UnitKilledEvent;
+            }
+            case "WaypointComplete": {
+                const index = params[1];
+                const wpId = this.waypointIds[`${groupNetId}-${index}` as CompositeWaypointKey];
+                if (!wpId) return null;
+
+                return {
+                    type: "WAYPOINT_COMPLETE",
+                    group,
+                    waypoint: { id: wpId } as unknown as Waypoint
+                } as WaypointCompleteEvent;
+            }
+            case "EnemyDetected": {
+                const targetId = this.getUnitId(params[1]);
+
+                return {
+                    type: "ENEMY_DETECTED",
+                    group,
+                    newTarget: targetId ? { id: targetId } as unknown as Unit : undefined
+                } as EnemyDetectedEvent;
+            }
+        }
+
         return null;
     }
 

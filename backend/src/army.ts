@@ -8,16 +8,15 @@ export interface Event {
 export interface UnitKilledEvent extends Event {
     type: "UNIT_KILLED";
     group: Group;
-    unit: Unit,
-    waypoint: Waypoint;
+    unit: Unit;
+    // fields "killer" and "instigator" omitted because the current domain model doesn't need them
 }
 
 export interface EnemyDetectedEvent extends Event {
-    type: "WAYPOINT_COMPLETE";
+    type: "ENEMY_DETECTED";
     group: Group;
-    waypoint: Waypoint;
+    newTarget?: Unit;
 }
-
 
 export interface WaypointCompleteEvent extends Event {
     type: "WAYPOINT_COMPLETE";
@@ -27,7 +26,7 @@ export interface WaypointCompleteEvent extends Event {
 
 export interface CombatModeChangedEvent extends Event {
     type: "COMBAT_MODE_CHANGED";
-    group: Group,
+    group: Group;
     newMode: string;
 }
 
