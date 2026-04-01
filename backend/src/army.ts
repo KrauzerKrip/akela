@@ -5,28 +5,28 @@ export interface Event {
     type: string;
 }
 
-export interface UnitKilledEvent extends Event {
+export interface GroupEvent extends Event {
+    groupId: string;
+}
+
+export interface UnitKilledEvent extends GroupEvent {
     type: "UNIT_KILLED";
-    group: Group;
-    unit: Unit;
-    // fields "killer" and "instigator" omitted because the current domain model doesn't need them
+    unitId: string;
+    // fields "killer" and "instigator" omitted because the current domain model doesn't require them
 }
 
-export interface EnemyDetectedEvent extends Event {
+export interface EnemyDetectedEvent extends GroupEvent {
     type: "ENEMY_DETECTED";
-    group: Group;
-    newTarget?: Unit;
+    newTargetId?: string;
 }
 
-export interface WaypointCompleteEvent extends Event {
+export interface WaypointCompleteEvent extends GroupEvent {
     type: "WAYPOINT_COMPLETE";
-    group: Group;
-    waypoint: Waypoint;
+    waypointId: string;
 }
 
-export interface CombatModeChangedEvent extends Event {
+export interface CombatModeChangedEvent extends GroupEvent {
     type: "COMBAT_MODE_CHANGED";
-    group: Group;
     newMode: string;
 }
 
@@ -40,7 +40,7 @@ export interface GameExecutor {
 }
 
 export interface GameEventDispatcher {
-    addHandler<EventType extends Event>(eventType: string, callback: (event: EventType) => void): void;
+    addGroupHandler<EventType extends GroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void;
 }
 
 export interface Weapon {
@@ -207,16 +207,6 @@ export class Report extends Task {
     }
 }
 
-export const taskQueue: Task[] = [];
-
-export function addTaskToQueue(task: Task) {
-    taskQueue.push(task);
-}
-
-export function executeImmediately(task: Task, executor: GameExecutor) {
-    task.execute(executor);
-}
-
 export class Group {
     public readonly id: string;
     private name: string;
@@ -224,6 +214,7 @@ export class Group {
     private unitById: Record<string, Unit>;
     private waypointById: Record<string, Waypoint>;
     private waypointList: WaypointList;
+    private taskQueue: Task[];
 
     constructor(id: string, name: string) {
         this.id = id;
@@ -232,6 +223,7 @@ export class Group {
         this.unitById = {};
         this.waypointById = {};
         this.waypointList = new WaypointList();
+        this.taskQueue = [];
     }
 
     public getName(): string {
@@ -245,6 +237,18 @@ export class Group {
         } else {
             return null;
         }
+    }
+
+    public addTaskToQueue(task: Task) {
+        this.taskQueue.push(task);
+    }
+
+    public executeImmediately(task: Task, executor: GameExecutor) {
+        task.execute(executor);
+    }
+
+    public setupEventHandlers(gameEventDispatcher: GameEventDispatcher) {
+        // @TODO
     }
 }
 

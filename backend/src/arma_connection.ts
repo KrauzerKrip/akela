@@ -1,4 +1,4 @@
-import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, GroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent } from "./army";
 import { GameExecutor } from "./army";
 import { sendArmaRequest } from "./index";
 
@@ -19,7 +19,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
     private waypointIds: Record<CompositeWaypointKey, string>;
     private objectIds: Record<NetId, string>;
     private groupIds: Record<NetId, string>;
-    private eventHandlers: Record<string, ((event: any) => void)[]>;
+    private groupEventHandlers: Record<string, Record<string, ((event: any) => void)[]>>;
 
     constructor() {
         this.armaWaypoints = {};
@@ -28,46 +28,53 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         this.waypointIds = {};
         this.objectIds = {};
         this.groupIds = {};
-        this.eventHandlers = {};
+        this.groupEventHandlers = {};
     }
 
-    public addHandler<EventType extends Event>(eventType: string, callback: (event: EventType) => void): void {
-        if (!this.eventHandlers[eventType]) {
-            this.eventHandlers[eventType] = [];
+    public addGroupHandler<EventType extends GroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void {
+        if (!this.groupEventHandlers[group.id]) {
+            this.groupEventHandlers[group.id] = {};
         }
-        this.eventHandlers[eventType].push(callback as (event: any) => void);
+        if (!this.groupEventHandlers[group.id][eventType]) {
+            this.groupEventHandlers[group.id][eventType] = [];
+        }
+        this.groupEventHandlers[group.id][eventType].push(callback as (event: any) => void);
     }
 
-    public fireEvent(event: Event): void {
-        const handlers = this.eventHandlers[event.type];
-        if (handlers) {
-            for (const handler of handlers) {
-                handler(event);
+    public fireGroupEvent(event: GroupEvent): void {
+        const groupId = event.groupId;
+        if (!groupId) return;
+
+        const groupHandlers = this.groupEventHandlers[groupId];
+        if (groupHandlers) {
+            const handlers = groupHandlers[event.type];
+            if (handlers) {
+                for (const handler of handlers) {
+                    handler(event);
+                }
             }
         }
     }
 
     public processRawEvent(eventName: string, params: any): void {
-        const parsedEvent = this.parseArmaEvent(eventName, params);
+        const parsedEvent = this.parseArmaGroupEvent(eventName, params);
         if (parsedEvent) {
-            this.fireEvent(parsedEvent);
+            this.fireGroupEvent(parsedEvent);
         }
     }
 
-    private parseArmaEvent(eventName: string, params: any): Event | null {
+    private parseArmaGroupEvent(eventName: string, params: any): GroupEvent | null {
         if (!Array.isArray(params) || params.length === 0) return null;
 
         const groupNetId = params[0];
         const groupId = this.getGroupId(groupNetId);
         if (!groupId) return null;
 
-        const group = { id: groupId } as unknown as Group;
-
         switch (eventName) {
             case "CombatModeChanged": {
                 return {
                     type: "COMBAT_MODE_CHANGED",
-                    group,
+                    groupId,
                     newMode: params[1]
                 } as CombatModeChangedEvent;
             }
@@ -76,8 +83,8 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
 
                 return {
                     type: "UNIT_KILLED",
-                    group,
-                    unit: { id: unitId ?? "unknown" } as unknown as Unit,
+                    groupId,
+                    unitId: unitId ?? "unknown",
                 } as UnitKilledEvent;
             }
             case "WaypointComplete": {
@@ -87,8 +94,8 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
 
                 return {
                     type: "WAYPOINT_COMPLETE",
-                    group,
-                    waypoint: { id: wpId } as unknown as Waypoint
+                    groupId,
+                    waypointId: wpId
                 } as WaypointCompleteEvent;
             }
             case "EnemyDetected": {
@@ -96,8 +103,8 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
 
                 return {
                     type: "ENEMY_DETECTED",
-                    group,
-                    newTarget: targetId ? { id: targetId } as unknown as Unit : undefined
+                    groupId,
+                    newTargetId: targetId
                 } as EnemyDetectedEvent;
             }
         }
