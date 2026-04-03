@@ -1,5 +1,7 @@
 import { Elysia, t } from "elysia";
 import { ArmaConnector } from "./arma_connection";
+import { PlanSandbox } from "./plan/sandbox";
+import { Army } from "./army";
 
 interface PendingRequest {
   id: string;
@@ -13,6 +15,14 @@ const requestQueue: PendingRequest[] = [];
 
 export const armaConnector = new ArmaConnector();
 
+
+let army = new Army("BLUFOR");
+
+const planSandbox = await PlanSandbox.create();
+
+const code = "something something";
+
+const plan = planSandbox.makePlan(army, code);
 
 
 

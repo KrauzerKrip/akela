@@ -7,12 +7,25 @@ class Task {
     constructor(type) {
         this.type = type;
         this.reactions = {};
+        this.assignedTeamId = null;
+        this.syncSiganl = null;
+        this.syncWait = null;
     }
-    addReaction(event, cb) {
-        this.reactions[event] = cb;
+    on(event, callback) {
+        this.reactions[event] = callback;
+        return this;
     }
-    assign(team) {
-        this.assignedTeamId = team.id;
+    assign(group) {
+        this.assignedGroupId = group.id;
+        return this;
+    }
+    signals(syncPoint) {
+        this.syncSiganl = syncPoint.id;
+        return this;
+    }
+    waitFor(syncPoint) {
+        this.syncWait = syncPoint.id;
+        return this;
     }
 }
 
@@ -43,6 +56,13 @@ global.Report = class extends Task {
     }
 };
 
+global.Sequence = class extends Task {
+    constructor(tasks) {
+        super("SEQEUNCE");
+        this.tasks = tasks;
+    }
+}
+
 global.Team = class {
     constructor(id, name) {
         this.id = id;
@@ -53,7 +73,7 @@ global.Team = class {
     }
 };
 
-global.teams = {};
+global.groups = {};
 
 global.addTaskToQueue = function (task) {
     if (global._addTaskCallback) {
