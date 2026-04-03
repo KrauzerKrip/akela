@@ -63,26 +63,15 @@ global.Sequence = class extends Task {
     }
 }
 
-global.Team = class {
-    constructor(id, name) {
-        this.id = id;
-        this.name = name;
-    }
-    assignTask(task) {
-        task.assign(this);
-    }
-};
+// global.Group = class {
+//     constructor(id, name) {
+//         this.id = id;
+//         this.name = name;
+//     }
+//     assignTask(task) {
+//         task.assign(this);
+//     }
+// };
 
-global.groups = {};
+//global.groups = {};
 
-global.addTaskToQueue = function (task) {
-    if (global._addTaskCallback) {
-        global._addTaskCallback(task);
-    }
-};
-
-global.executeImmediately = function (task) {
-    if (global._executeCallback) {
-        global._executeCallback(task);
-    }
-};

@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Army, Group, Push, Assault, Retreat, Report, Task, Waypoint, GameExecutor, SequenceTask } from "../army";
 import { PlanEvent, PlanGroup, Plan } from "./models";
 import { Point } from "../geography";
+import { translateTask, translateToPlanGroup } from "./translation";
 
 export class PlanSandbox {
     private arena: Arena;
@@ -31,69 +32,17 @@ export class PlanSandbox {
         return new PlanSandbox(arena);
     }
 
-    private translateTask(jsTask: any, army: Army): Task {
-        const type: string = jsTask.type;
-        const name: string = jsTask.name;
-        // Fallback to contextGroup if no teamId is explicitly provided in the task
-        if (!jsTask.assignedGroupId) {
-            throw Error("Task must be assigned to a group")
-        }
-
-        let task: Task;
-        switch (type) {
-            case 'PUSH':
-            case 'ASSAULT':
-                const waypoints = jsTask.waypoints.map((wp: any) => ({
-                    id: uuidv4(),
-                    position: { x: wp.x, y: wp.y, } as Point
-                } as Waypoint));
-                task = type === 'PUSH'
-                    ? Push.fromWaypoints(waypoints, name)
-                    : Assault.fromWaypoints(waypoints, name);
-                break;
-
-            case 'SEQUENCE':
-                // Recursively translate children
-                const children = jsTask.tasks.map((t: any) => this.translateTask(t, army));
-                task = SequenceTask.fromTasks(children, name);
-                break;
-
-            case 'RETREAT':
-                task = Retreat.create(name);
-                break;
-
-            default:
-                task = new Report(uuidv4(), "Report", jsTask.msg || "No message");
-        }
-
-        // Store reactions for the host to trigger later
-        if (jsTask.reactions) {
-            this.taskReactions.set(task.id, jsTask.reactions);
-        }
-
-        return task;
-    }
-
-    private translateToOrderGroup(group: Group): PlanGroup {
-        return {
-            getCasualties() {
-                return group.getCasualties();
-            },
-            getCasualtyRatio() {
-                return group.getCasualtyRatio();
-            },
-            getAliveUnitCount() {
-                return group.getAliveUnitCount();
-            }
-        }
-    }
 
 
     public makePlan(army: Army, code: string): Plan {
         console.log(`[Sandbox] Making plan for army...`);
 
-        const groups = army.getGroups();
-        const groupsScript = groups.map(g => `groups["${g.getName()}"] = new Group("${g.id}", "${g.getName()}");`).join('\n');
+        const planGroups: Record<string, PlanGroup> = {};
+        for (const g of army.getGroups()) {
+            planGroups[g.getName()] = translateToPlanGroup(g);
+        }
+        //const planGroups = army.getGroups().map(g => translateToPlanGroup(g));
+        //const groupsScript = groups.map(g => `groups["${g.getName()}"] = new Group("${g.id}", "${g.getName()}");`).join('\n');
 
         let plan: Plan = {
             immediateTasks: {},
@@ -101,20 +50,21 @@ export class PlanSandbox {
         }
 
         this.arena.expose({
-            addTaskCallback: (jsTask: any) => {
+            addTaskToQueue: (jsTask: any) => {
                 if (!jsTask.assignedGroupId) {
                     throw Error("Task must be assigned to a group")
                 }
-                const task = this.translateTask(jsTask, army);
+                const task = translateTask(jsTask);
                 plan.queuedTasks[jsTask.assignedGroupId].push(task);
             },
-            executeCallback: (jsTask: any) => {
-                const task = this.translateTask(jsTask, army);
+            executeImmediately: (jsTask: any) => {
+                const task = translateTask(jsTask);
                 plan.immediateTasks[jsTask.assignedGroupId] = task;
-            }
+            },
+            groups: planGroups,
         });
 
-        this.arena.evalCode(groupsScript);
+        //this.arena.evalCode(groupsScript);
 
         try {
             this.arena.evalCode(code);
@@ -126,8 +76,33 @@ export class PlanSandbox {
         return plan;
     }
 
-    public handlePlanEvent<EventType extends PlanEvent>(event: EventType) {
+    public handlePlanEvent<EventType extends PlanEvent>(group: Group, event: EventType): Task | null {
+        const currentTask = group.getCurrentTask();
+        if (!currentTask) { return null; }
+        const reactions = this.taskReactions.get(currentTask.id);
+        const planGroup = translateToPlanGroup(group);
+        if (reactions && reactions[event.type]) {
+            const jsCallback = reactions[event.type];
+            try {
+                // Execute the JS callback inside the Arena
+                // Result might be a new Task object or null
+                const result = jsCallback(event, planGroup);
+                console.log(`[Sandbox] Executed js callback for event ${event.type}`);
+                if (result) {
+                    const newTask = translateTask(result);
+                    // If the reaction returns a new task (e.g. Retreat)
+                    if (result.reactions) {
+                        console.log(`[Sandbox] Set new reactions for task ${newTask.id} (${newTask.type}).`);
+                        this.taskReactions.set(newTask.id, result.reactions);
+                    }
+                    return newTask;
+                }
+            } catch (err) {
+                console.error(`[Sandbox] Callback error on event ${event.type}:`, err);
+            }
+        }
 
+        return null;
     }
 
 
@@ -168,42 +143,6 @@ export class PlanSandbox {
                 }
             }
         });
-    }
-
-    private mapEventToOrderName(type: string): string | null {
-        const mapping: Record<string, string> = {
-            'UNIT_KILLED': 'KIA',
-            'WAYPOINT_COMPLETE': 'TASK_COMPLETE',
-            'ENEMY_DETECTED': 'NEW_CONTACT'
-        };
-        return mapping[type] || null;
-    }
-
-    public executeScript(code: string, army: Army, executor: GameExecutor) {
-        console.log(`[Sandbox] Executing script for army...`);
-        // Expose groups as teams
-        const groups = (army as any).groups as Group[];
-
-        this.arena.expose({
-            addTaskCallback: (jsTask: any) => {
-                const task = this.translateTask(jsTask, (id) => army.getGroupById(id));
-                (task as any).group.addTaskToQueue(task);
-            },
-            _executeCallback: (jsTask: any) => {
-                const task = this.translateTask(jsTask, (id) => army.getGroupById(id));
-                (task as any).group.executeImmediately(task, executor);
-            }
-        });
-
-        const teamsScript = groups.map(g => `teams["${g.getName()}"] = new Team("${g.id}", "${g.getName()}");`).join('\n');
-        this.arena.evalCode(teamsScript);
-
-        try {
-            this.arena.evalCode(code);
-        } catch (e) {
-            console.error("Error executing script inside sandbox:", e);
-            throw e;
-        }
     }
 
     public dispose() {

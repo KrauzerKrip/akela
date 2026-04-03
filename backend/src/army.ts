@@ -342,14 +342,20 @@ export class Group {
         }
     }
 
-    public executeImmediately(task: Task) {
-        task.execute(this, this.executor);
+    public async executeImmediately(task: Task) {
+        await task.execute(this, this.executor);
     }
 
     public clearTasks() {
         this.taskQueue = [];
         this.activeTask = null;
         //TODO: Logic to stop current group movement in Arma (e.g. doStop)
+    }
+
+    public addUnit(unit: Unit) {
+        this.units.push(unit);
+        this.unitById[unit.id] = unit;
+        this.unitsAlive[unit.id] = true;
     }
 
     public setupEventHandlers(gameEventDispatcher: GameEventDispatcher) {

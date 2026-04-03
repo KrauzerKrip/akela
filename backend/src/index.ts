@@ -24,7 +24,22 @@ const code = "something something";
 
 const plan = planSandbox.makePlan(army, code);
 
+const groups = army.getGroups();
+const immediateTaskPromises = [];
+for (const group of groups) {
+  plan.queuedTasks[group.id].forEach((task, index, tasks) => {
+    group.addTaskToQueue(task);
+  });
+  immediateTaskPromises.push(group.executeImmediately(plan.immediateTasks[group.id]));
+}
 
+await Promise.all(immediateTaskPromises);
+
+for (const group of groups) {
+  group.subscribe((event) => {
+    if (event.type === "UNIT_KILLED")
+  });
+}
 
 export function sendArmaRequest(commands: any[]): Promise<any> {
   return new Promise((resolve, reject) => {
