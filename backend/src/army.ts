@@ -35,6 +35,16 @@ export interface TaskCompleteEvent extends GroupEvent {
     taskId: string;
 }
 
+// export interface SignalEvent extends GroupEvent {
+//     type: "SIGNAL",
+//     signal: Signal;
+// }
+
+export interface Signal {
+    id: string;
+    name: string;
+}
+
 export interface GameExecutor {
     addWaypoint(group: Group, waypoint: Waypoint): Promise<void>;
     getGroupAssignedVehicles(group: Group): Promise<string[]>;
@@ -151,14 +161,24 @@ export class Task {
     public readonly type: string;
     public readonly id: string;
     public readonly name: string;
+    private signal: Signal | null;
     public async execute(group: Group, executor: GameExecutor): Promise<void> { }
 
     constructor(id: string, type: string, name: string) {
         this.id = id;
         this.name = name;
         this.type = type;
+        this.signal = null;
     }
 
+
+    public setCompletionSignal(signal: Signal) {
+        this.signal = signal;
+    }
+
+    public getCompletionSignal(): Signal | null {
+        return this.signal;
+    }
 
     public static create(name: string) {
         return new Task(uuidv4(), "TASK", name);
@@ -174,6 +194,7 @@ export class Push extends Task {
     }
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
+        console.log(`[PUSH] ${group.getName()}: ${this.name}`);
         for (const wp of this.waypoints) {
             executor.addWaypoint(group, wp);
         }
@@ -193,6 +214,7 @@ export class Assault extends Task {
     }
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
+        console.log(`[ASSAULT] ${group.getName()}: ${this.name}`);
         for (const wp of this.waypoints) {
             executor.addWaypoint(group, wp);
             executor.setCombatMode(group, "RED");
@@ -213,7 +235,7 @@ export class Retreat extends Task {
     }
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
-        // Handle retreat logic
+        console.log(`[RETREAT] ${group.getName()}: ${this.name}`);
     }
 
     public static fromWaypoints(waypoints: Waypoint[], name: string) {
@@ -259,11 +281,33 @@ export class SequenceTask extends Task {
             group.taskQueue.unshift(this.subTasks[i]);
         }
 
-        await group.executeNext();
+        await group.completeCurrentTask();
+    }
+}
+
+export class WaitTask extends Task {
+    public readonly signalToWaitFor: Signal;
+
+    constructor(id: string, name: string, signal: Signal) {
+        super(id, "WAIT", name);
+        this.signalToWaitFor = signal;
+    }
+
+    public async execute(group: Group, executor: GameExecutor): Promise<void> {
+        console.log(`[WAIT] ${group.getName()}: waiting now`);
+    }
+
+    public static fromSignal(signal: Signal, name: string | null = null) {
+        if (!name) {
+            name = `Waiting for '${signal.name}'`;
+        }
+        return new WaitTask(uuidv4(), name, signal);
     }
 }
 
 export type GroupEventListener = (event: GroupEvent) => void;
+
+export type SignalListener = (signal: Signal) => void;
 
 export class Group {
     public readonly id: string;
@@ -274,7 +318,8 @@ export class Group {
     private waypointById: Record<string, Waypoint>;
     private waypointList: WaypointList;
     public taskQueue: Task[];
-    private listeners: GroupEventListener[] = [];
+    private listeners: GroupEventListener[];
+    private signalListeners: SignalListener[];
     private activeTask: Task | null;
     private executor: GameExecutor;
 
@@ -289,6 +334,8 @@ export class Group {
         this.taskQueue = [];
         this.activeTask = null;
         this.executor = executor;
+        this.listeners = [];
+        this.signalListeners = [];
     }
 
     public getCurrentTask(): Task | null {
@@ -320,10 +367,28 @@ export class Group {
         this.listeners.push(listener);
     }
 
+    // using separate listener for outbound signals so there is no chance for an infinite loop of a signal to form (it will be difficult to debug)
+    public subscribeToSignals(listener: SignalListener) {
+        this.signalListeners.push(listener);
+    }
+
+    public async receiveSignal(signal: Signal) {
+        if (this.activeTask) {
+            if (this.activeTask.type == "WAIT") {
+                const task = this.activeTask as WaitTask;
+                if (task.signalToWaitFor.id == signal.id) {
+                    await this.completeCurrentTask();
+                }
+            }
+        }
+    }
+
+
     public emitDomainEvent(event: GroupEvent) {
         for (const listener of this.listeners) {
             listener(event);
         }
+
     }
 
     public getName(): string {
@@ -346,14 +411,23 @@ export class Group {
         }
     }
 
-    public async executeNext() {
-        this.activeTask = this.taskQueue.shift() || null;
-        if (this.activeTask) {
-            await this.activeTask.execute(this, this.executor);
+    public async completeCurrentTask() {
+        if (!this.activeTask) {
+            return;
         }
+
+        const signal = this.activeTask.getCompletionSignal()
+        if (signal) {
+            this.emitSignal(signal);
+        }
+
+
+        await this.executeNext();
     }
 
+
     public async executeImmediately(task: Task) {
+        this.activeTask = task;
         await task.execute(this, this.executor);
     }
 
@@ -388,6 +462,20 @@ export class Group {
             this.emitDomainEvent(event);
         });
     }
+
+
+    private emitSignal(signal: Signal) {
+        for (const listener of this.signalListeners) {
+            listener(signal);
+        }
+    }
+
+    private async executeNext() {
+        this.activeTask = this.taskQueue.shift() || null;
+        if (this.activeTask) {
+            await this.activeTask.execute(this, this.executor);
+        }
+    }
 }
 
 export class Army {
@@ -404,6 +492,9 @@ export class Army {
     public addGroup(group: Group) {
         this.groups.push(group);
         this.groupById[group.id] = group;
+        group.subscribeToSignals((signal) => {
+            this.propagateSignal(signal);
+        });
     }
 
     public getGroupById(id: string): Group | undefined {
@@ -412,5 +503,9 @@ export class Army {
 
     public getGroups(): Group[] {
         return this.groups.slice(0);
+    }
+
+    private propagateSignal(signal: Signal) {
+        this.groups.forEach(g => g.receiveSignal(signal));
     }
 }

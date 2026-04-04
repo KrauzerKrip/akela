@@ -1,5 +1,5 @@
 // DO NOT USE THIS FILE DIRECTLY
-// This file is to use with isolated-vm for order sandboxing.
+// This file is to use with isolated-vm for plan sandboxing.
 
 global.Event = { NEW_CONTACT: 'NEW_CONTACT', KIA: 'KIA' };
 
@@ -9,8 +9,7 @@ class Task {
         this.name = name;
         this.reactions = {};
         this.assignedTeamId = null;
-        this.syncSiganl = null;
-        this.syncWait = null;
+        this.completionSignal = null;
     }
     on(event, callback) {
         this.reactions[event] = callback;
@@ -21,11 +20,7 @@ class Task {
         return this;
     }
     signals(syncPoint) {
-        this.syncSiganl = syncPoint.id;
-        return this;
-    }
-    waitFor(syncPoint) {
-        this.syncWait = syncPoint.id;
+        this.completionSignal = syncPoint;
         return this;
     }
 }
@@ -58,10 +53,29 @@ global.Report = class extends Task {
     }
 };
 
+global.Wait = class extends Task {
+    constructor(signalToWaitFor, name) {
+        super('WAIT', name);
+        this.signalToWaitFor = signalToWaitFor;
+    }
+}
+
 global.Sequence = class extends Task {
-    constructor(tasks, name) {
-        super("SEQEUNCE", name);
-        this.tasks = tasks;
+    constructor(name) {
+        super("SEQUENCE", name);
+        this.tasks = [];
+    }
+
+    then(task) {
+        this.tasks.push(task);
+        return this;
+    }
+}
+
+class SyncPoint {
+    constructor(name) {
+        this.id = global.generateUuid();
+        this.name = name;
     }
 }
 

@@ -51,6 +51,8 @@ export class PlanSandbox {
 
         this.arena.expose({
             groups: planGroups,
+            generateUuid: uuidv4,
+            log: console.log,
         });
 
         try {

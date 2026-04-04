@@ -47,9 +47,11 @@ async function test() {
     const eventDispatcher = new DummyEventDispatcher();
     const army = new Army("BLUFOR");
     const alpha = new Group("alpha-id", "Alpha", executor);
+    const bravo = new Group("bravo-id", "Bravo", executor);
     alpha.setupEventHandlers(eventDispatcher);
+    bravo.setupEventHandlers(eventDispatcher);
     for (let i = 0; i < 4; i++) {
-        const unit = new Unit(`unit_${i}_id`, `Unit ${i}`, {
+        const unitA = new Unit(`unitA_${i}_id`, `Unit Alpha ${i}`, {
             weapons:
             {
                 primary:
@@ -69,12 +71,32 @@ async function test() {
                 },
             }
         }, []);
-
-        alpha.addUnit(unit);
+        const unitB = new Unit(`unitB_${i}_id`, `Unit Bravo ${i}`, {
+            weapons:
+            {
+                primary:
+                {
+                    ammo:
+                        { type: "cool ammo", quantity: 30 },
+                    base: "base",
+                    description: "cool weapon",
+                    sight: "cool sight"
+                },
+                secondary: {
+                    ammo:
+                        { type: "cool ammo", quantity: 30 },
+                    base: "base",
+                    description: "cool weapon",
+                    sight: "cool sight"
+                },
+            }
+        }, []);
+        alpha.addUnit(unitA);
+        bravo.addUnit(unitB);
     }
 
     army.addGroup(alpha);
-    army.addGroup(new Group("bravo-id", "Bravo", executor));
+    army.addGroup(bravo);
 
     const sandbox = await PlanSandbox.create();
 
@@ -105,12 +127,20 @@ async function test() {
         console.log("Task in queue type:", (task).constructor.name);
         console.log("Simulating KIA event with >0.5 casualties...");
         alpha.addTaskToQueue(task);
-        const event: UnitKilledEvent = { groupId: alpha.id, type: "UNIT_KILLED", unitId: "unit_1_id" };
+        const event: UnitKilledEvent = { groupId: alpha.id, type: "UNIT_KILLED", unitId: "unitA_1_id" };
         const planEvent: KiaPlanEvent = { type: "KIA" };
         eventDispatcher.fireGroupEvent(event);
         const newPlan = sandbox.handlePlanEvent(alpha, planEvent);
         if (newPlan) {
             console.log("New plan:", newPlan);
+            if (newPlan.clearGroupTasks[alpha.id]) {
+                alpha.clearTasks();
+            }
+            if (newPlan.clearGroupTasks[bravo.id]) {
+                bravo.clearTasks();
+            }
+            await alpha.executeImmediately(newPlan.immediateTasks[alpha.id]);
+            await alpha.completeCurrentTask();
         } else {
             console.log("New plan is null");
         }

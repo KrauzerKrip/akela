@@ -1,6 +1,6 @@
-import { Army, Group, Task, Waypoint, Push, Assault, Report, Retreat, SequenceTask } from "../army";
+import { Army, Group, Task, Waypoint, Push, Assault, Report, Retreat, SequenceTask, Signal, WaitTask } from "../army";
 import { Point } from "../geography";
-import { PlanGroup, Plan } from "./models";
+import { PlanGroup, Plan, SyncPoint } from "./models";
 import { v4 as uuidv4 } from "uuid";
 
 export function translateToPlanGroup(plan: Plan, group: Group): PlanGroup {
@@ -40,6 +40,7 @@ export function translateToPlanGroup(plan: Plan, group: Group): PlanGroup {
 export function translateTask(jsTask: any): Task {
     const type: string = jsTask.type;
     const name: string = jsTask.name;
+    const completionSyncPoint: SyncPoint | null = jsTask.completionSignal;
     let waypoints = [];
     if (jsTask.waypoints) {
         waypoints = jsTask.waypoints.map((wp: any) => ({
@@ -68,9 +69,22 @@ export function translateTask(jsTask: any): Task {
             const message: string = jsTask.message;
             task = Report.fromMessage(message, name);
             break;
+        case 'WAIT':
+            const waitSyncPoint = jsTask.signalToWaitFor;
+            const waitSignal = translateSyncPoint(waitSyncPoint);
+            task = WaitTask.fromSignal(waitSignal, name || null);
+            break;
         default:
-            task = new Report(uuidv4(), "Report", jsTask.msg || "No message");
+            throw Error(`Unknown task type: ${type}`);
+    }
+
+    if (completionSyncPoint) {
+        task.setCompletionSignal(translateSyncPoint(completionSyncPoint));
     }
 
     return task;
+}
+
+export function translateSyncPoint(syncPoint: SyncPoint): Signal {
+    return { id: syncPoint.id, name: syncPoint.name };
 }
