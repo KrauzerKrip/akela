@@ -83,33 +83,36 @@ async function test() {
 
     console.log("Making plan...");
     const plan = sandbox.makePlan(army, code);
-
     const groups = army.getGroups();
     const immediateTaskPromises = [];
     for (const group of groups) {
-        plan.queuedTasks[group.id].forEach((task, index, tasks) => {
-            group.addTaskToQueue(task);
-        });
-        immediateTaskPromises.push(group.executeImmediately(plan.immediateTasks[group.id]));
+        if (plan.queuedTasks[group.id]) {
+            plan.queuedTasks[group.id].forEach((task, index, tasks) => {
+                group.addTaskToQueue(task);
+            });
+        }
+        if (plan.immediateTasks[group.id]) {
+            immediateTaskPromises.push(group.executeImmediately(plan.immediateTasks[group.id]));
+        }
     }
 
     await Promise.all(immediateTaskPromises);
 
     console.log("--- Execution Results ---");
-    console.log("taskQueue length:", alpha.taskQueue.length);
-    if (alpha.taskQueue.length > 0) {
-        console.log("Task in queue type:", (alpha.taskQueue[0] as any).constructor.name);
-        console.log("Assigned group ID:", (alpha.taskQueue[0] as any).group.id);
-
+    console.log("taskQueue length:", plan.queuedTasks[alpha.id].length);
+    if (plan.queuedTasks[alpha.id].length > 0) {
+        const task = plan.queuedTasks[alpha.id][0];
+        console.log("Task in queue type:", (task).constructor.name);
         console.log("Simulating KIA event with >0.5 casualties...");
+        alpha.addTaskToQueue(task);
         const event: UnitKilledEvent = { groupId: alpha.id, type: "UNIT_KILLED", unitId: "unit_1_id" };
         const planEvent: KiaPlanEvent = { type: "KIA" };
         eventDispatcher.fireGroupEvent(event);
-        const task = sandbox.handlePlanEvent(alpha, planEvent);
-        if (task) {
-            console.log("New task type:", (task).constructor.name);
+        const newPlan = sandbox.handlePlanEvent(alpha, planEvent);
+        if (newPlan) {
+            console.log("New plan:", newPlan);
         } else {
-            console.log("New task is null");
+            console.log("New plan is null");
         }
     }
 }

@@ -4,8 +4,9 @@
 global.Event = { NEW_CONTACT: 'NEW_CONTACT', KIA: 'KIA' };
 
 class Task {
-    constructor(type) {
+    constructor(type, name) {
         this.type = type;
+        this.name = name;
         this.reactions = {};
         this.assignedTeamId = null;
         this.syncSiganl = null;
@@ -30,35 +31,36 @@ class Task {
 }
 
 global.Push = class extends Task {
-    constructor(waypoints) {
-        super('PUSH');
+    constructor(waypoints, name) {
+        super('PUSH', name);
         this.waypoints = waypoints;
     }
 };
 
 global.Assault = class extends Task {
-    constructor(waypoints) {
+    constructor(waypoints, name) {
         super('ASSAULT');
         this.waypoints = waypoints;
     }
 };
 
 global.Retreat = class extends Task {
-    constructor() {
-        super('RETREAT');
+    constructor(waypoints, name) {
+        super('RETREAT', name);
+        this.waypoints = waypoints
     }
 };
 
 global.Report = class extends Task {
-    constructor(data) {
-        super('REPORT');
-        this.msg = data.message;
+    constructor(message, name) {
+        super('REPORT', name);
+        this.message = message;
     }
 };
 
 global.Sequence = class extends Task {
-    constructor(tasks) {
-        super("SEQEUNCE");
+    constructor(tasks, name) {
+        super("SEQEUNCE", name);
         this.tasks = tasks;
     }
 }

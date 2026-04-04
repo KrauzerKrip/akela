@@ -205,8 +205,19 @@ export class Assault extends Task {
 }
 
 export class Retreat extends Task {
+    private waypoints: Waypoint[];
+
+    constructor(id: string, name: string, waypoints: Waypoint[]) {
+        super(id, "RETREAT", name,);
+        this.waypoints = waypoints;
+    }
+
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         // Handle retreat logic
+    }
+
+    public static fromWaypoints(waypoints: Waypoint[], name: string) {
+        return new Retreat(uuidv4(), name, waypoints);
     }
 }
 
