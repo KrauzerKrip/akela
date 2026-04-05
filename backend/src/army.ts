@@ -35,10 +35,10 @@ export interface TaskCompleteEvent extends GroupEvent {
     taskId: string;
 }
 
-// export interface SignalEvent extends GroupEvent {
-//     type: "SIGNAL",
-//     signal: Signal;
-// }
+export interface SignalEvent extends GroupEvent {
+    type: "SIGNAL",
+    signal: Signal;
+}
 
 export interface Signal {
     id: string;
@@ -170,8 +170,6 @@ export class Task {
         this.type = type;
         this.signal = null;
     }
-
-
     public setCompletionSignal(signal: Signal) {
         this.signal = signal;
     }
@@ -198,6 +196,25 @@ export class Push extends Task {
         for (const wp of this.waypoints) {
             executor.addWaypoint(group, wp);
         }
+
+        const finalWaypointId = this.waypoints[this.waypoints.length - 1].id;
+
+        // Return a Promise that resolves when the domain event fires
+        return new Promise((resolve) => {
+            const completionListener = (event: GroupEvent) => {
+                if (event.type === "WAYPOINT_COMPLETE") {
+                    const wpEvent = event as WaypointCompleteEvent;
+
+                    // TODO: Add a timeout or fallback in case Arma AI breaks
+                    if (wpEvent.waypointId === finalWaypointId) {
+                        group.unsubscribe(completionListener); // Cleanup!
+                        resolve(); // This finally unblocks the task!
+                    }
+                }
+            };
+
+            group.subscribe(completionListener);
+        });
     }
 
     public static fromWaypoints(waypoints: Waypoint[], name: string) {
@@ -261,7 +278,6 @@ export class Report extends Task {
 
 export class SequenceTask extends Task {
     private subTasks: Task[];
-    private currentIndex: number = 0;
 
     constructor(id: string, name: string, subTasks: Task[]) {
         super(id, "SEQUENCE", name);
@@ -275,13 +291,14 @@ export class SequenceTask extends Task {
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         if (this.subTasks.length === 0) return;
 
-        // The sequence doesn't finish until all children are done.
-        // We inject the subtasks into the front of the group's queue.
-        for (let i = this.subTasks.length - 1; i >= 0; i--) {
-            group.taskQueue.unshift(this.subTasks[i]);
-        }
+        for (const task of this.subTasks) {
+            await task.execute(group, executor);
 
-        await group.completeCurrentTask();
+            const signal = task.getCompletionSignal();
+            if (signal) {
+                group.emitSignal(signal);
+            }
+        }
     }
 }
 
@@ -295,6 +312,20 @@ export class WaitTask extends Task {
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         console.log(`[WAIT] ${group.getName()}: waiting now`);
+        return new Promise((resolve) => {
+            const completionListener = (event: GroupEvent) => {
+                if (event.type === "SIGNAL") {
+                    const signalEvent = event as SignalEvent;
+
+                    if (signalEvent.signal.id === this.signalToWaitFor.id) {
+                        group.unsubscribe(completionListener);
+                        resolve();
+                    }
+                }
+            };
+
+            group.subscribe(completionListener);
+        });
     }
 
     public static fromSignal(signal: Signal, name: string | null = null) {
@@ -367,28 +398,30 @@ export class Group {
         this.listeners.push(listener);
     }
 
+    public unsubscribe(listener: GroupEventListener) {
+        const index = this.listeners.findIndex(l => l == listener);
+        if (index > -1) {
+            this.listeners.splice(index, 1);
+        }
+    }
+
     // using separate listener for outbound signals so there is no chance for an infinite loop of a signal to form (it will be difficult to debug)
     public subscribeToSignals(listener: SignalListener) {
         this.signalListeners.push(listener);
     }
 
     public async receiveSignal(signal: Signal) {
-        if (this.activeTask) {
-            if (this.activeTask.type == "WAIT") {
-                const task = this.activeTask as WaitTask;
-                if (task.signalToWaitFor.id == signal.id) {
-                    await this.completeCurrentTask();
-                }
-            }
-        }
+        this.emitDomainEvent({
+            type: "SIGNAL",
+            groupId: this.id,
+            signal: signal
+        } as SignalEvent);
     }
-
 
     public emitDomainEvent(event: GroupEvent) {
         for (const listener of this.listeners) {
             listener(event);
         }
-
     }
 
     public getName(): string {
@@ -411,24 +444,17 @@ export class Group {
         }
     }
 
-    public async completeCurrentTask() {
-        if (!this.activeTask) {
-            return;
-        }
-
-        const signal = this.activeTask.getCompletionSignal()
-        if (signal) {
-            this.emitSignal(signal);
-        }
-
-
-        await this.executeNext();
-    }
-
 
     public async executeImmediately(task: Task) {
         this.activeTask = task;
         await task.execute(this, this.executor);
+
+        const signal = task.getCompletionSignal();
+        if (signal) {
+            this.emitSignal(signal);
+        }
+
+        this.activeTask = null;
     }
 
     public clearTasks() {
@@ -464,16 +490,27 @@ export class Group {
     }
 
 
-    private emitSignal(signal: Signal) {
+    public emitSignal(signal: Signal) {
         for (const listener of this.signalListeners) {
             listener(signal);
         }
     }
 
-    private async executeNext() {
+    public async executeNext() {
+        if (this.taskQueue.length === 0) {
+            this.activeTask = null;
+            return;
+        }
+
         this.activeTask = this.taskQueue.shift() || null;
         if (this.activeTask) {
+            // This will now naturally wait for the task to finish itself
             await this.activeTask.execute(this, this.executor);
+            const signal = this.activeTask.getCompletionSignal()
+            if (signal) {
+                this.emitSignal(signal);
+            }
+            this.executeNext();
         }
     }
 }

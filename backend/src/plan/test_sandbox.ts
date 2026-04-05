@@ -48,47 +48,21 @@ async function test() {
     const army = new Army("BLUFOR");
     const alpha = new Group("alpha-id", "Alpha", executor);
     const bravo = new Group("bravo-id", "Bravo", executor);
+
     alpha.setupEventHandlers(eventDispatcher);
     bravo.setupEventHandlers(eventDispatcher);
+
     for (let i = 0; i < 4; i++) {
         const unitA = new Unit(`unitA_${i}_id`, `Unit Alpha ${i}`, {
-            weapons:
-            {
-                primary:
-                {
-                    ammo:
-                        { type: "cool ammo", quantity: 30 },
-                    base: "base",
-                    description: "cool weapon",
-                    sight: "cool sight"
-                },
-                secondary: {
-                    ammo:
-                        { type: "cool ammo", quantity: 30 },
-                    base: "base",
-                    description: "cool weapon",
-                    sight: "cool sight"
-                },
+            weapons: {
+                primary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
+                secondary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
             }
         }, []);
         const unitB = new Unit(`unitB_${i}_id`, `Unit Bravo ${i}`, {
-            weapons:
-            {
-                primary:
-                {
-                    ammo:
-                        { type: "cool ammo", quantity: 30 },
-                    base: "base",
-                    description: "cool weapon",
-                    sight: "cool sight"
-                },
-                secondary: {
-                    ammo:
-                        { type: "cool ammo", quantity: 30 },
-                    base: "base",
-                    description: "cool weapon",
-                    sight: "cool sight"
-                },
+            weapons: {
+                primary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
+                secondary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
             }
         }, []);
         alpha.addUnit(unitA);
@@ -106,10 +80,17 @@ async function test() {
     console.log("Making plan...");
     const plan = sandbox.makePlan(army, code);
     const groups = army.getGroups();
+
+    // We store the promises but do NOT await them immediately if they are 
+    // long-running tasks (like Push or Wait). If we await them here, the script 
+    // pauses, and we can never fire the simulated KIA event below!
     const immediateTaskPromises = [];
+    console.log(plan);
+
     for (const group of groups) {
         if (plan.queuedTasks[group.id]) {
-            plan.queuedTasks[group.id].forEach((task, index, tasks) => {
+            plan.queuedTasks[group.id].forEach((task) => {
+                // This naturally triggers group.executeNext() in the background
                 group.addTaskToQueue(task);
             });
         }
@@ -118,32 +99,49 @@ async function test() {
         }
     }
 
-    await Promise.all(immediateTaskPromises);
-
     console.log("--- Execution Results ---");
-    console.log("taskQueue length:", plan.queuedTasks[alpha.id].length);
-    if (plan.queuedTasks[alpha.id].length > 0) {
-        const task = plan.queuedTasks[alpha.id][0];
-        console.log("Task in queue type:", (task).constructor.name);
-        console.log("Simulating KIA event with >0.5 casualties...");
-        alpha.addTaskToQueue(task);
-        const event: UnitKilledEvent = { groupId: alpha.id, type: "UNIT_KILLED", unitId: "unitA_1_id" };
-        const planEvent: KiaPlanEvent = { type: "KIA" };
-        eventDispatcher.fireGroupEvent(event);
-        const newPlan = sandbox.handlePlanEvent(alpha, planEvent);
-        if (newPlan) {
-            console.log("New plan:", newPlan);
-            if (newPlan.clearGroupTasks[alpha.id]) {
-                alpha.clearTasks();
-            }
-            if (newPlan.clearGroupTasks[bravo.id]) {
-                bravo.clearTasks();
-            }
-            await alpha.executeImmediately(newPlan.immediateTasks[alpha.id]);
-            await alpha.completeCurrentTask();
-        } else {
-            console.log("New plan is null");
+    // Get the real queue length from the Group object, not the static plan payload
+    console.log("Alpha taskQueue length:", alpha.taskQueue.length);
+
+    // Let the event loop breathe a tick so immediate tasks can establish their event listeners
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    console.log("Simulating KIA event with >0.5 casualties...");
+
+    const event: UnitKilledEvent = { groupId: alpha.id, type: "UNIT_KILLED", unitId: "unitA_1_id" };
+    const planEvent: KiaPlanEvent = { type: "KIA" }; // Assuming your sandbox mapper needs this
+
+    // Fire the event! If an active task is listening for it, it will react.
+    eventDispatcher.fireGroupEvent(event);
+
+    // Pass the domain event to your sandbox to generate a reactionary plan
+    const newPlan = sandbox.handlePlanEvent(alpha, planEvent);
+
+    if (newPlan) {
+        console.log("New plan received from sandbox:", newPlan);
+
+        // 1. Wipe current operations if the sandbox demands it
+        if (newPlan.clearGroupTasks[alpha.id]) {
+            alpha.clearTasks(); // Wipes activeTask and empties taskQueue
         }
+        if (newPlan.clearGroupTasks[bravo.id]) {
+            bravo.clearTasks();
+        }
+
+        // 2. Fire immediate override tasks (e.g., Retreat or Report)
+        if (newPlan.immediateTasks[alpha.id]) {
+            // Note: Not awaiting this so the test can finish, unless it's an instant resolve like Report
+            alpha.executeImmediately(newPlan.immediateTasks[alpha.id]);
+        }
+
+        // 3. Queue new tasks
+        // We DO NOT call executeNext() manually. `addTaskToQueue` will automatically kickstart the queue.
+        if (newPlan.queuedTasks && newPlan.queuedTasks[alpha.id]) {
+            newPlan.queuedTasks[alpha.id].forEach(task => alpha.addTaskToQueue(task));
+        }
+
+    } else {
+        console.log("New plan is null (no reaction triggered)");
     }
 }
 
