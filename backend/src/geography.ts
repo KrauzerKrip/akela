@@ -11,6 +11,12 @@ export interface Point {
     y: number;
 }
 
+export interface Point3D {
+    x: number;
+    y: number;
+    z: number;
+}
+
 export class GameMapArea {
     public readonly leftBottomCorner: Point;
     public readonly rightTopCorner: Point;

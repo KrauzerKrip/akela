@@ -1,6 +1,8 @@
-import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, GroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, GroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon } from "./army";
 import { GameExecutor } from "./army";
+import { Point, Point3D } from "./geography";
 import { sendArmaRequest } from "./index";
+import { v4 as uuidv4 } from 'uuid';
 
 export type NetId = string;
 
@@ -197,59 +199,105 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         }
     }
 
-    public async getWaypoints(group: Group): Promise<ArmaWaypoint[]> {
-        const armaGroupNetId = this.getArmaGroupNetId(group.id);
-        if (armaGroupNetId !== undefined) {
-            const result = await sendArmaRequest([["waypoints", armaGroupNetId]]);
-            if (result && result[0] && Array.isArray(result[0][2])) {
-                const data = result[0][2];
-                if (data.length > 0 && data[0] === "error") {
-                    return [];
-                }
-                return data.map((wp: any[]) => ({
-                    groupNetId: wp[0],
-                    index: wp[1]
-                }));
+    public async getWaypoints(group: Group): Promise<Waypoint[]> {
+        const armaWaypoints = await this.getArmaWaypoints(group);
+        const maybePositions = await Promise.all(armaWaypoints.map((wp) => this.getArmaWaypointPosition(wp)));
+        const positions: Point3D[] = [];
+        const errors: ArmaWaypoint[] = [];
+        for (let i = 0; i < maybePositions.length; i++) {
+            const maybePosition = maybePositions[i];
+            if (maybePosition) {
+                positions.push(maybePosition);
+            } else {
+                errors.push(armaWaypoints[i]);
             }
         }
-        return [];
+        if (errors.length > 0) {
+            const errorWpsMsg = errors.map(e => `group: ${group.getName()}, index: ${e.index}`).join("\n");
+            throw Error("Couldn't get position for waypoints: " + errorWpsMsg);
+        }
+        const zip = (a: ArmaWaypoint[], b: Point3D[]) => a.map((k, i) => [k, b[i]]);
+        return zip(armaWaypoints, positions).map(armaWpAndPos => {
+            const armaWp = armaWpAndPos[0] as ArmaWaypoint;
+            const pos = armaWpAndPos[1] as Point3D;
+            const key: CompositeWaypointKey = `${armaWp.groupNetId}-${armaWp.index}`;
+            let id = this.waypointIds[key];
+            if (!id) {
+                id = uuidv4();
+                this.registerWaypoint(id, armaWp);
+            }
+            return {
+                id,
+                position: { x: pos.x, y: pos.y }
+            } as Waypoint;
+        });
+    }
+
+    public async getGroups(side: string): Promise<Group[]> {
+        const data = await this.getArmaGroups(side);
+        return data.map((groupData: string[]) => {
+            const netId = groupData[0];
+            const name = groupData[1];
+
+            let id = this.getGroupId(netId);
+            if (!id) {
+                id = uuidv4();
+                this.registerGroup(id, netId);
+            }
+            return new Group(id, name, this);
+        });
+    }
+
+    public async getGroupUnits(group: Group): Promise<Unit[]> {
+        const data = await this.getArmaGroupUnits(group);
+        const units: Unit[] = [];
+        for (const unitData of data) {
+            const netId = unitData[0];
+            const name = unitData[1];
+
+            let id = this.getUnitId(netId);
+            if (!id) {
+                id = uuidv4();
+                this.registerUnit(id, netId);
+            }
+
+            const tempUnit = new Unit(id, name, { weapons: { primary: { base: null, sight: null, ammo: { type: "", quantity: 0 }, description: null }, secondary: { base: null, sight: null, ammo: { type: "", quantity: 0 }, description: null } } });
+            const loadout = await this.getUnitLoadout(tempUnit);
+            units.push(new Unit(id, name, loadout, []));
+        }
+        return units;
+    }
+
+    public async getUnitLoadout(unit: Unit): Promise<Loadout> {
+        const data = await this.getArmaUnitLoadout(unit);
+
+        const parseWeapon = (weaponData: any[]): Weapon => {
+            if (!weaponData || weaponData.length === 0) {
+                return { base: null, sight: null, ammo: { type: "", quantity: 0 }, description: null };
+            }
+            return {
+                base: weaponData[0] || null,
+                sight: weaponData[3] || null,
+                ammo: {
+                    type: weaponData[4]?.[0] || "",
+                    quantity: weaponData[4]?.[1] || 0
+                },
+                description: null
+            };
+        };
+
+        return {
+            weapons: {
+                primary: parseWeapon(data[0] || []),
+                secondary: parseWeapon(data[2] || [])
+            }
+        };
     }
 
     public async getGroupAssignedVehicles(group: Group): Promise<string[]> {
         const armaGroupNetId = this.getArmaGroupNetId(group.id);
         if (armaGroupNetId !== undefined) {
             const result = await sendArmaRequest([["getGroupAssignedVehicle", armaGroupNetId]]);
-            return result[0]?.[2] ?? [];
-        }
-        return [];
-    }
-
-    public async getGroups(side: string): Promise<any[]> {
-        const result = await sendArmaRequest([["groups", side]]);
-        if (result && result[0] && Array.isArray(result[0][2])) {
-            return result[0][2];
-        }
-        return [];
-    }
-
-    public async getGroupUnits(group: Group): Promise<any[]> {
-        const armaGroupNetId = this.getArmaGroupNetId(group.id);
-        if (armaGroupNetId !== undefined) {
-            const result = await sendArmaRequest([["units", armaGroupNetId]]);
-            const data = result[0]?.[2];
-            if (Array.isArray(data) && data.length > 0 && data[0]?.[0] === "error") {
-                return [];
-            }
-            return data ?? [];
-        }
-        return [];
-    }
-
-
-    public async getUnitLoadout(unit: Unit): Promise<any[]> {
-        const armaUnitNetId = this.getArmaUnitNetId(unit.id);
-        if (armaUnitNetId !== undefined) {
-            const result = await sendArmaRequest([["getUnitLoadout", armaUnitNetId]]);
             return result[0]?.[2] ?? [];
         }
         return [];
@@ -285,8 +333,67 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
 
     public async executeTask(task: Task) {
         // double-dispatch!!!
-        task.execute(this);
+        task.execute(this as any, this);
     }
 
+    public async getArmaWaypoints(group: Group): Promise<ArmaWaypoint[]> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["waypoints", armaGroupNetId]]);
+            if (result && result[0] && Array.isArray(result[0][2])) {
+                const data = result[0][2];
+                if (data.length > 0 && data[0] === "error") {
+                    return [];
+                }
+                return data.map((wp: any[]) => ({
+                    groupNetId: wp[0],
+                    index: wp[1]
+                }));
+            }
+        }
+        return [];
+    }
 
+    public async getArmaWaypointPosition(waypoint: ArmaWaypoint): Promise<Point3D | null> {
+        const result = await sendArmaRequest([["getWaypointPosition", [waypoint.groupNetId, waypoint.index]]]);
+        if (result && result[0] && Array.isArray(result[0][2])) {
+            const data = result[0][2];
+            if (data.length > 0 && data[0] === "error") {
+                return null;
+            }
+            return { x: data[0], y: data[1], z: data[2] };
+        }
+        return null;
+
+    }
+
+    public async getArmaGroups(side: string): Promise<any[]> {
+        const result = await sendArmaRequest([["groups", side]]);
+        if (result && result[0] && Array.isArray(result[0][2])) {
+            return result[0][2];
+        }
+        return [];
+    }
+
+    public async getArmaGroupUnits(group: Group): Promise<any[]> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["units", armaGroupNetId]]);
+            const data = result[0]?.[2];
+            if (Array.isArray(data) && data.length > 0 && data[0]?.[0] === "error") {
+                return [];
+            }
+            return data ?? [];
+        }
+        return [];
+    }
+
+    public async getArmaUnitLoadout(unit: Unit): Promise<any[]> {
+        const armaUnitNetId = this.getArmaUnitNetId(unit.id);
+        if (armaUnitNetId !== undefined) {
+            const result = await sendArmaRequest([["getUnitLoadout", armaUnitNetId]]);
+            return result[0]?.[2] ?? [];
+        }
+        return [];
+    }
 }

@@ -195,6 +195,11 @@ def add_event_handlers(group_net_id, callback=None):
         callback = lambda response: log_to_server(f"addEventHandlers response: {response}")
     request([["addEventHandlers", group_net_id]], callback)
 
+def get_waypoint_position(group_net_id, index=-1, callback=None):
+    if callback is None:
+        callback = lambda response: log_to_server(f"waypoints response: {response}")
+    request([["getWaypointPosition", [group_net_id, index]]], callback)
+
 def get_localhost_data():
     url = "http://localhost:3000"
     try:

@@ -191,6 +191,18 @@ scriptName "Pythia_Polling_Loop";
                             _queryResult = ["error", "Group not found or is null"];
                         };
                     };
+
+                    case "waypointPosition": {
+                        private _grp = groupFromNetId (_queryArg select 0);
+                        if (!isNull _grp) then {
+                            private _index = _queryArg select 1;
+                            private _wpPos = waypointPosition [_grp, _index];
+                            _queryResult = _wpPos;
+                        } else {
+                            _queryResult = ["error", "Group not found or is null"];
+                        };
+                    };
+
                     case "addEventHandlers": {
                         private _grp = groupFromNetId _queryArg;
                         if (!isNull _grp) then {
