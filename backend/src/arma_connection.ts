@@ -1,4 +1,4 @@
-import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, GroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, GroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle } from "./army";
 import { GameExecutor } from "./army";
 import { Point, Point3D } from "./geography";
 import { sendArmaRequest } from "./index";
@@ -60,6 +60,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
 
     public processRawEvent(eventName: string, params: any): void {
         const parsedEvent = this.parseArmaGroupEvent(eventName, params);
+        console.log(parsedEvent);
         if (parsedEvent) {
             this.fireGroupEvent(parsedEvent);
         }
@@ -101,7 +102,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
                 } as WaypointCompleteEvent;
             }
             case "EnemyDetected": {
-                const targetId = this.getUnitId(params[1]);
+                const targetId = params[1];
 
                 return {
                     type: "ENEMY_DETECTED",
@@ -130,7 +131,20 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         this.waypointIds[key] = id;
     }
 
+    public registerVehicle(id: string, netId: NetId): void {
+        this.armaObjects[id] = netId;
+        this.objectIds[netId] = id;
+    }
+
     public unregisterUnit(id: string): void {
+        const netId = this.armaObjects[id];
+        if (netId !== undefined) {
+            delete this.armaObjects[id];
+            delete this.objectIds[netId];
+        }
+    }
+
+    public unregisterVehicle(id: string): void {
         const netId = this.armaObjects[id];
         if (netId !== undefined) {
             delete this.armaObjects[id];
@@ -159,6 +173,10 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         return this.armaObjects[id];
     }
 
+    public getArmaVehicleNetId(id: string): NetId | undefined {
+        return this.armaObjects[id];
+    }
+
     public getArmaGroupNetId(id: string): NetId | undefined {
         return this.armaGroups[id];
     }
@@ -171,6 +189,10 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         return this.objectIds[netId];
     }
 
+    public getVehicleId(netId: NetId): string | undefined {
+        return this.objectIds[netId];
+    }
+
     public getGroupId(netId: NetId): string | undefined {
         return this.groupIds[netId];
     }
@@ -178,6 +200,20 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
     public getWaypointId(waypoint: ArmaWaypoint): string | undefined {
         const key: CompositeWaypointKey = `${waypoint.groupNetId}-${waypoint.index}`;
         return this.waypointIds[key];
+    }
+
+    public async addGroupEventHandlers(group: Group): Promise<void> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["addEventHandlers", armaGroupNetId]]);
+
+            if (result && result[0] && Array.isArray(result[0][2])) {
+                const data = result[0][2];
+                if (data[0] == "error") {
+                    console.log(`group ${group.getName()} event handler error: ${data[1]}`);
+                }
+            }
+        }
     }
 
     public async addWaypoint(group: Group, waypoint: Waypoint): Promise<void> {
@@ -195,7 +231,6 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
                     });
                 }
             }
-            // @TODO completion callback
         }
     }
 
@@ -262,7 +297,12 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
             }
 
             const tempUnit = new Unit(id, name, { weapons: { primary: { base: null, sight: null, ammo: { type: "", quantity: 0 }, description: null }, secondary: { base: null, sight: null, ammo: { type: "", quantity: 0 }, description: null } } });
-            const loadout = await this.getUnitLoadout(tempUnit);
+            const loadout = {
+                weapons: {
+                    primary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
+                    secondary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
+                }
+            };//await this.getUnitLoadout(tempUnit);
             units.push(new Unit(id, name, loadout, []));
         }
         return units;
@@ -294,15 +334,6 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         };
     }
 
-    public async getGroupAssignedVehicles(group: Group): Promise<string[]> {
-        const armaGroupNetId = this.getArmaGroupNetId(group.id);
-        if (armaGroupNetId !== undefined) {
-            const result = await sendArmaRequest([["getGroupAssignedVehicle", armaGroupNetId]]);
-            return result[0]?.[2] ?? [];
-        }
-        return [];
-    }
-
     public async setCombatMode(group: Group, mode: string): Promise<void> {
         const armaGroupNetId = this.getArmaGroupNetId(group.id);
         if (armaGroupNetId !== undefined) {
@@ -329,6 +360,25 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         if (armaGroupNetId !== undefined) {
             await sendArmaRequest([["setFormation", [armaGroupNetId, formation]]]);
         }
+    }
+
+    public async getGroupAssignedVehicles(group: Group): Promise<Vehicle[]> {
+        const data = await this.getGroupAssignedArmaVehicles(group);
+        const vehicles: Vehicle[] = [];
+        for (const unitData of data) {
+            const netId = unitData[0];
+            const name = unitData[1];
+
+            let id = this.getVehicleId(netId);
+            if (!id) {
+                id = uuidv4();
+                this.registerVehicle(id, netId);
+            }
+
+            const vehicle: Vehicle = { id: id, name: name };
+            vehicles.push(vehicle);
+        }
+        return vehicles;
     }
 
     public async executeTask(task: Task) {
@@ -392,6 +442,15 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         const armaUnitNetId = this.getArmaUnitNetId(unit.id);
         if (armaUnitNetId !== undefined) {
             const result = await sendArmaRequest([["getUnitLoadout", armaUnitNetId]]);
+            return result[0]?.[2] ?? [];
+        }
+        return [];
+    }
+
+    public async getGroupAssignedArmaVehicles(group: Group): Promise<string[]> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["getGroupAssignedVehicle", armaGroupNetId]]);
             return result[0]?.[2] ?? [];
         }
         return [];

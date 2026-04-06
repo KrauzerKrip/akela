@@ -5,8 +5,11 @@ from queue import Queue, Empty
 requests = {}
 request_queue = Queue(maxsize=15)
 
+DO_LOG = True
 
 def log_to_server(message):
+    if not DO_LOG:
+        return
     """Helper to send a message to the backend server."""
     try:
         import json
@@ -20,7 +23,7 @@ def log_to_server(message):
         pass
     
 def my_function():
-    log_to_server("TEST!")
+    log_to_server("TEST!!")
     return ["awesome", 42, True, (1, 2)]
 
 def my_function_2(group):

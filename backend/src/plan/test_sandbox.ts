@@ -1,10 +1,25 @@
 import { PlanSandbox } from "./sandbox";
-import { Army, Group, GameExecutor, Waypoint, UnitKilledEvent, Unit, GameEventDispatcher, GroupEvent } from "../army";
+import { Army, Group, GameExecutor, Waypoint, UnitKilledEvent, Unit, GameEventDispatcher, GroupEvent, Loadout } from "../army";
 import * as fs from "fs";
 import * as path from "path";
 import { KiaPlanEvent } from "./models";
 
 class DummyExecutor implements GameExecutor {
+    getGroups(side: string): Promise<Group[]> {
+        throw new Error("Method not implemented.");
+    }
+    getGroupUnits(group: Group): Promise<Unit[]> {
+        throw new Error("Method not implemented.");
+    }
+    getUnitLoadout(unit: Unit): Promise<Loadout> {
+        throw new Error("Method not implemented.");
+    }
+    getWaypoints(group: Group): Promise<Waypoint[]> {
+        throw new Error("Method not implemented.");
+    }
+    addGroupEventHandlers(group: Group): Promise<void> {
+        throw new Error("Method not implemented.");
+    }
     async addWaypoint(group: Group, waypoint: Waypoint) {
         console.log(`[Executor] addWaypoint to ${group.getName()}: (${waypoint.position.x}, ${waypoint.position.y})`);
     }

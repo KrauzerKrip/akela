@@ -46,12 +46,17 @@ export interface Signal {
 }
 
 export interface GameExecutor {
+    getGroups(side: string): Promise<Group[]>;
+    getGroupUnits(group: Group): Promise<Unit[]>;
+    getUnitLoadout(unit: Unit): Promise<Loadout>;
     addWaypoint(group: Group, waypoint: Waypoint): Promise<void>;
-    getGroupAssignedVehicles(group: Group): Promise<string[]>;
+    getWaypoints(group: Group): Promise<Waypoint[]>;
+    getGroupAssignedVehicles(group: Group): Promise<Vehicle[]>;
     setCombatMode(group: Group, mode: string): Promise<void>;
     setCombatBehaviour(group: Group, behaviour: string): Promise<void>;
     setGroupId(group: Group, name: string): Promise<void>;
     setFormation(group: Group, formation: string): Promise<void>;
+    addGroupEventHandlers(group: Group): Promise<void>;
 }
 
 export interface GameEventDispatcher {
@@ -72,6 +77,11 @@ export interface Loadout {
 export interface Waypoint {
     readonly id: string;
     position: Point; // PositionAGL
+}
+
+export interface Vehicle {
+    readonly id: string;
+    name: string;
 }
 
 export class Unit {
@@ -117,6 +127,22 @@ class WaypointList {
             this.head.prev = node;
             node.next = this.head;
             this.head = node;
+        }
+        return node;
+    }
+
+    public insertInEnd(waypoint: Waypoint): WaypointNode {
+        const node: WaypointNode = { id: waypoint.id, next: null, prev: null };
+        if (!this.head) {
+            this.head = node;
+        } else {
+            let lastNode: WaypointNode = this.head;
+            while (lastNode.next != null) {
+                lastNode = lastNode.next;
+            }
+
+            lastNode.next = node;
+            node.prev = lastNode;
         }
         return node;
     }
@@ -191,6 +217,7 @@ export class Push extends Task {
         this.waypoints = waypoints;
     }
 
+    // @TODO: prevent potential race condition: https://gemini.google.com/share/3ed31b0048b2
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         console.log(`[PUSH] ${group.getName()}: ${this.name}`);
         for (const wp of this.waypoints) {
@@ -346,6 +373,7 @@ export class Group {
     private units: Unit[];
     private unitsAlive: Record<string, boolean>;
     private unitById: Record<string, Unit>;
+    private vehicles: Vehicle[];
     private waypointById: Record<string, Waypoint>;
     private waypointList: WaypointList;
     public taskQueue: Task[];
@@ -360,6 +388,7 @@ export class Group {
         this.units = [];
         this.unitsAlive = {};
         this.unitById = {};
+        this.vehicles = [];
         this.waypointById = {};
         this.waypointList = new WaypointList();
         this.taskQueue = [];
@@ -437,6 +466,10 @@ export class Group {
         }
     }
 
+    public addWaypointInEnd(waypoint: Waypoint) {
+        this.waypointList.insertInEnd(waypoint);
+    }
+
     public addTaskToQueue(task: Task) {
         this.taskQueue.push(task);
         if (!this.activeTask) {
@@ -467,6 +500,10 @@ export class Group {
         this.units.push(unit);
         this.unitById[unit.id] = unit;
         this.unitsAlive[unit.id] = true;
+    }
+
+    public addVehicle(vehicle: Vehicle) {
+        this.vehicles.push(vehicle);
     }
 
     public setupEventHandlers(gameEventDispatcher: GameEventDispatcher) {
@@ -544,5 +581,38 @@ export class Army {
 
     private propagateSignal(signal: Signal) {
         this.groups.forEach(g => g.receiveSignal(signal));
+    }
+}
+
+export class ArmyComposer {
+    private readonly gameExecutor: GameExecutor;
+    private readonly gameEventDispatcher: GameEventDispatcher;
+
+    constructor(gameExecutor: GameExecutor, gameEventDispatcher: GameEventDispatcher) {
+        this.gameExecutor = gameExecutor;
+        this.gameEventDispatcher = gameEventDispatcher;
+    }
+
+    public async composeArmyOfSide(side: string): Promise<Army> {
+        const army = new Army(side);
+        console.log("getting groups");
+        const groups = await this.gameExecutor.getGroups(side);
+        console.log("got gruops ");
+
+        for (const group of groups) {
+            const units = await this.gameExecutor.getGroupUnits(group);
+            units.forEach(u => group.addUnit(u));
+            const waypoints = await this.gameExecutor.getWaypoints(group);
+            waypoints.forEach(wp => group.addWaypointInEnd(wp));
+            const vehicles = await this.gameExecutor.getGroupAssignedVehicles(group);
+            vehicles.forEach(v => group.addVehicle(v));
+
+            this.gameExecutor.addGroupEventHandlers(group);
+            group.setupEventHandlers(this.gameEventDispatcher);
+
+            army.addGroup(group);
+        }
+
+        return army;
     }
 }

@@ -24,7 +24,7 @@ scriptName "Pythia_Polling_Loop";
                 private _queryType = _x select 0;
                 private _queryArg  = _x select 1;
                 private _queryResult = [];
-
+                hint _queryType;
                 switch (_queryType) do {
                     case "log": {
                         // _queryArg is the string message from Python
@@ -192,7 +192,7 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
-                    case "waypointPosition": {
+                    case "getWaypointPosition": {
                         private _grp = groupFromNetId (_queryArg select 0);
                         if (!isNull _grp) then {
                             private _index = _queryArg select 1;

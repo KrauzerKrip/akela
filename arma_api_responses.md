@@ -179,7 +179,7 @@ Because a client can send multiple queries in a single HTTP polling request, the
     ```
 
 
-### 13. `waypointPosition`
+### 13. `getWaypointPosition`
 * **Description**: Get provided waypoint's position.
 * **Query Argument**: `[string, number]` (`[group_netId, index]`)
 * **Returns (`queryResult`)** `[number, number, number]` (PositionAGL (Above Ground Level)). If the group is not found, returns `["error", "Group not found or is null"]`.
