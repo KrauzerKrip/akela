@@ -29,6 +29,12 @@ global.Push = class extends Task {
     constructor(waypoints, name) {
         super('PUSH', name);
         this.waypoints = waypoints;
+        this.behaviourChangeTo = null;
+    }
+
+    withCombatBehaviour(behaviour) {
+        this.behaviourChangeTo = behaviour;
+        return this;
     }
 };
 
@@ -36,6 +42,12 @@ global.Assault = class extends Task {
     constructor(waypoints, name) {
         super('ASSAULT');
         this.waypoints = waypoints;
+        this.behaviourChangeTo = null;
+    }
+
+    withCombatBehaviour(behaviour) {
+        this.behaviourChangeTo = behaviour;
+        return this;
     }
 };
 
@@ -57,6 +69,12 @@ global.Wait = class extends Task {
     constructor(signalToWaitFor, name) {
         super('WAIT', name);
         this.signalToWaitFor = signalToWaitFor;
+        this.behaviourChangeTo = null;
+    }
+
+    withCombatBehaviour(behaviour) {
+        this.behaviourChangeTo = behaviour;
+        return this;
     }
 }
 

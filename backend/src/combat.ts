@@ -11,6 +11,7 @@ enum GroupStatus {
 export class GroupCombatMonitor {
     private group: Group;
     private status: GroupStatus;
+    private combatBehaviour: string;
     private lastDetectionTime: number = 0;
 
     // How many milliseconds without a detection before we consider combat "ended"
@@ -32,6 +33,7 @@ export class GroupCombatMonitor {
         this.status = GroupStatus.Normal;
         // Subscribe to the raw, spammy events
         this.group.subscribe(this.handleRawGroupEvent.bind(this));
+        this.combatBehaviour = "AWARE"; // reasonable default
     }
 
     public subscribe(listener: TacticalEventListener) {
@@ -96,6 +98,7 @@ export class GroupCombatMonitor {
     }
 
     private handleCombatModeChanged(event: CombatModeChangedEvent) {
+        this.combatBehaviour = event.newMode;
         if (event.newMode === "COMBAT") {
             this.status = GroupStatus.Engaged;
             this.emitTacticalEvent({

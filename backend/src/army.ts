@@ -1,4 +1,4 @@
-import { Point } from "./geography";
+import { Point, Point3D } from "./geography";
 import { v4 as uuidv4 } from 'uuid';
 
 export interface Event {
@@ -18,6 +18,7 @@ export interface UnitKilledEvent extends EngineGroupEvent {
 export interface EnemyDetectedEvent extends EngineGroupEvent {
     type: "ENEMY_DETECTED";
     newTargetId?: string;
+    position: Point3D;
 }
 
 export interface WaypointCompleteEvent extends EngineGroupEvent {
@@ -56,6 +57,10 @@ export interface EngagedInCombatEvent extends TacticalGroupEvent {
 
 export interface CombatEndedEvent extends TacticalGroupEvent {
     type: "COMBAT_ENDED";
+}
+
+export interface KIA extends TacticalGroupEvent {
+    type: "KIA";
 }
 
 export interface Signal {
@@ -198,7 +203,9 @@ class WaypointList {
     }
 }
 
-
+export interface Stance {
+    behaviour: string;
+}
 
 // removed ReactionCallback
 export class Task {
@@ -229,10 +236,12 @@ export class Task {
 
 export class Push extends Task {
     private waypoints: Waypoint[];
+    private stanceChangeTo: Stance | null;
 
     constructor(id: string, name: string, waypoints: Waypoint[]) {
         super(id, "PUSH", name,);
         this.waypoints = waypoints;
+        this.stanceChangeTo = null;
     }
 
     // @TODO: prevent potential race condition: https://gemini.google.com/share/3ed31b0048b2
@@ -240,6 +249,65 @@ export class Push extends Task {
         console.log(`[PUSH] ${group.getName()}: ${this.name}`);
         for (const wp of this.waypoints) {
             executor.addWaypoint(group, wp);
+        }
+
+        const finalWaypointId = this.waypoints[this.waypoints.length - 1].id;
+
+        executor.setCombatMode(group, "YELLOW");
+        if (this.stanceChangeTo) {
+            executor.setCombatBehaviour(group, this.stanceChangeTo.behaviour);
+        }
+
+        // Return a Promise that resolves when the domain event fires
+        return new Promise((resolve) => {
+            const completionListener = (event: EngineGroupEvent) => {
+                if (event.type === "WAYPOINT_COMPLETE") {
+                    const wpEvent = event as WaypointCompleteEvent;
+
+                    // TODO: Add a timeout or fallback in case Arma AI breaks
+                    if (wpEvent.waypointId === finalWaypointId) {
+                        group.unsubscribe(completionListener); // Cleanup!
+                        resolve(); // This finally unblocks the task!
+                    }
+                }
+            };
+
+            group.subscribe(completionListener);
+        });
+    }
+
+    public changeStanceTo(stance: Stance) {
+        this.stanceChangeTo = stance;
+    }
+
+    public getStanceChangeTo(): Stance | null {
+        return this.stanceChangeTo;
+    }
+
+    public static fromWaypoints(waypoints: Waypoint[], name: string) {
+        return new Push(uuidv4(), name, waypoints);
+    }
+}
+
+export class Assault extends Task {
+    private waypoints: Waypoint[];
+    private stanceChangeTo: Stance | null;
+
+    constructor(id: string, name: string, waypoints: Waypoint[]) {
+        super(id, "ASSAULT", name);
+        this.waypoints = waypoints;
+        this.stanceChangeTo = null;
+    }
+
+    public async execute(group: Group, executor: GameExecutor): Promise<void> {
+        console.log(`[ASSAULT] ${group.getName()}: ${this.name}`);
+        for (const wp of this.waypoints) {
+            executor.addWaypoint(group, wp);
+        }
+
+        executor.setCombatMode(group, "RED");
+        if (this.stanceChangeTo) {
+            executor.setCombatBehaviour(group, this.stanceChangeTo.behaviour);
         }
 
         const finalWaypointId = this.waypoints[this.waypoints.length - 1].id;
@@ -262,31 +330,19 @@ export class Push extends Task {
         });
     }
 
-    public static fromWaypoints(waypoints: Waypoint[], name: string) {
-        return new Push(uuidv4(), name, waypoints);
-    }
-}
-
-export class Assault extends Task {
-    private waypoints: Waypoint[];
-
-    constructor(id: string, name: string, waypoints: Waypoint[]) {
-        super(id, "ASSAULT", name);
-        this.waypoints = waypoints;
+    public changeStanceTo(stance: Stance) {
+        this.stanceChangeTo = stance;
     }
 
-    public async execute(group: Group, executor: GameExecutor): Promise<void> {
-        console.log(`[ASSAULT] ${group.getName()}: ${this.name}`);
-        for (const wp of this.waypoints) {
-            executor.addWaypoint(group, wp);
-            executor.setCombatMode(group, "RED");
-        }
+    public getStanceChangeTo(): Stance | null {
+        return this.stanceChangeTo;
     }
 
     public static fromWaypoints(waypoints: Waypoint[], name: string) {
         return new Assault(uuidv4(), name, waypoints);
     }
 }
+
 
 export class Retreat extends Task {
     private waypoints: Waypoint[];
@@ -298,6 +354,30 @@ export class Retreat extends Task {
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         console.log(`[RETREAT] ${group.getName()}: ${this.name}`);
+        for (const wp of this.waypoints) {
+            executor.addWaypoint(group, wp);
+        }
+
+        executor.setCombatMode(group, "GREEN");
+
+        const finalWaypointId = this.waypoints[this.waypoints.length - 1].id;
+
+        // Return a Promise that resolves when the domain event fires
+        return new Promise((resolve) => {
+            const completionListener = (event: EngineGroupEvent) => {
+                if (event.type === "WAYPOINT_COMPLETE") {
+                    const wpEvent = event as WaypointCompleteEvent;
+
+                    // TODO: Add a timeout or fallback in case Arma AI breaks
+                    if (wpEvent.waypointId === finalWaypointId) {
+                        group.unsubscribe(completionListener); // Cleanup!
+                        resolve(); // This finally unblocks the task!
+                    }
+                }
+            };
+
+            group.subscribe(completionListener);
+        });
     }
 
     public static fromWaypoints(waypoints: Waypoint[], name: string) {
@@ -349,13 +429,22 @@ export class SequenceTask extends Task {
 
 export class WaitTask extends Task {
     public readonly signalToWaitFor: Signal;
+    private stanceChangeTo: Stance | null;
 
     constructor(id: string, name: string, signal: Signal) {
         super(id, "WAIT", name);
         this.signalToWaitFor = signal;
+        this.stanceChangeTo = null;
     }
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
+        executor.setCombatMode(group, "GREEN");
+        if (this.stanceChangeTo) {
+            executor.setCombatBehaviour(group, this.stanceChangeTo.behaviour);
+        } else {
+            executor.setCombatBehaviour(group, "AWARE");
+        }
+
         console.log(`[WAIT] ${group.getName()}: waiting now`);
         return new Promise((resolve) => {
             const completionListener = (event: EngineGroupEvent) => {
@@ -371,6 +460,14 @@ export class WaitTask extends Task {
 
             group.subscribe(completionListener);
         });
+    }
+
+    public changeStanceTo(stance: Stance) {
+        this.stanceChangeTo = stance;
+    }
+
+    public getStanceChangeTo(): Stance | null {
+        return this.stanceChangeTo;
     }
 
     public static fromSignal(signal: Signal, name: string | null = null) {

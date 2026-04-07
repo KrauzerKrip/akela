@@ -94,3 +94,35 @@ _group [addEventHandler](https://community.bistudio.com/wiki/addEventHandler) ["
 
 - group: [Group](https://community.bistudio.com/wiki/Group "Group")
 - newTarget: [Object](https://community.bistudio.com/wiki/Object "Object")
+
+# setCombatMode
+
+    Sets AI group combat mode (engagement rules). For individual unit's combat mode see setUnitCombatMode. Mode may be one of the following:
+- BLUE: Never Fire, Disengage
+
+    Hold fire. Keep in formation.
+    The group will never fire under any circumstances. When hostile units are detected, they will track them, but will never fire back, even when fired upon.
+    This mode can only be set through the editor or script. No in-game commands to subordinates can set them to combat mode Blue.
+
+- GREEN: Hold Fire, Disengage
+
+    Do not fire unless fired upon. Keep in formation.
+    Individual units will open fire on any enemy units that are both aware of their individual presence and can harm them.
+    When a player orders his units to "Hold fire", the units are set to combat mode Green.
+
+- WHITE: Hold Fire, Engage At Will
+
+    Do not fire unless fired upon. Pursue targets by seeking a position that allows for a possible firing solution on the target.
+    Individual units will only open fire on enemy units that are both aware of their individual presence and can harm them.
+
+- YELLOW: Fire At Will, Disengage DEFAULT MODE
+
+    Open fire. Keep in formation.
+    Units will fire upon any suitable target in effective range, while staying in formation.
+    If a leader calls out a target, the units with aim without breaking formation.
+
+- RED: Fire At Will, Engage At Will
+
+    Open fire. Pursue targets by seeking a position that allows for a possible firing solution on the target.
+    When a leader commands his units to Engage at will, combat mode RED is set. The AI does not keep formation and each member moves individually. The leader command Disengage will set the units back to fire at will (YELLOW)
+    If Attack and Engage is called, the unit will break formation to find the best place to attack from (combat mode RED).

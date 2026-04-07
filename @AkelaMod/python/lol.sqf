@@ -8,12 +8,10 @@ scriptName "Pythia_Polling_Loop";
         // Returns a HashMap if data exists, or an empty Array [] if the queue was empty.
         private _requestData = ["AkelaMod.pollRequest", []] call py3_fnc_callExtension;
         if (count _requestData > 0) then {
-    hint str _requestData; // Prints to the in-game chat
 };
         // 2. Check if we received an Array containing [id, data]
         if (_requestData isEqualType [] && {count _requestData == 2}) then {
             // Extract the data
-            hint "IF";
             private _reqId = _requestData select 0;
             private _queries = _requestData select 1;
 
@@ -24,7 +22,6 @@ scriptName "Pythia_Polling_Loop";
                 private _queryType = _x select 0;
                 private _queryArg  = _x select 1;
                 private _queryResult = [];
-                hint _queryType;
                 switch (_queryType) do {
                     case "log": {
                         // _queryArg is the string message from Python
@@ -220,7 +217,7 @@ scriptName "Pythia_Polling_Loop";
                             }];
                             _grp addEventHandler ["EnemyDetected", {
                                 params ["_group", "_newTarget"];
-                                ["AkelaMod.on_event", ["EnemyDetected", [netId _group, netId _newTarget]]] call py3_fnc_callExtension;
+                                ["AkelaMod.on_event", ["EnemyDetected", [netId _group, netId _newTarget, getPos _newTarget]]] call py3_fnc_callExtension;
                             }];
                             _queryResult = true;
                         } else {
