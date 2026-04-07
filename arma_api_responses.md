@@ -184,7 +184,12 @@ Because a client can send multiple queries in a single HTTP polling request, the
 * **Query Argument**: `[string, number]` (`[group_netId, index]`)
 * **Returns (`queryResult`)** `[number, number, number]` (PositionAGL (Above Ground Level)). If the group is not found, returns `["error", "Group not found or is null"]`.
 
-### 14. `addEventHandlers`
+### 14. `getGroupLeaderPosition`
+* **Description**: Get PositionAGLS of the group's leader.
+* **Query Argument**: `string` (Group `netId`)
+* **Returns (`queryResult`)** `[number, number, number]` (PositionAGL (Above Ground Level and Surfaces)). If the group is not found, returns `["error", "Group not found or is null"]`.
+
+### 15. `addEventHandlers`
 *   **Description**: Attaches several group-level event handlers (`CombatModeChanged`, `UnitKilled`, `WaypointComplete`, `EnemyDetected`) to the specified group. When triggered, these invoke `AkelaMod.on_event` to push payloads asynchronously back to the backend.
 *   **Query Argument**: `string` (Group `netId`)
 *   **Returns (`queryResult`)**: `boolean` (`true` if the group was found and event handlers were added). If the group is not found, returns `["error", "Group not found or is null"]`.
@@ -196,6 +201,7 @@ Because a client can send multiple queries in a single HTTP polling request, the
       true
     ]
     ```
+
 
 ---
 

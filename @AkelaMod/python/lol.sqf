@@ -200,6 +200,16 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
+                    case "getGroupLeaderPosition": {
+                        private _grp = groupFromNetId _queryArg;
+                        if (!isNull _grp) then {
+                            private _ldPos = getPos (leader _grp);
+                            _queryResult = _ldPos;
+                        } else {
+                            _queryResult = ["error", "Group not found or is null"];
+                        };
+                    };
+
                     case "addEventHandlers": {
                         private _grp = groupFromNetId _queryArg;
                         if (!isNull _grp) then {

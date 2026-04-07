@@ -80,6 +80,7 @@ export interface GameExecutor {
     setGroupId(group: Group, name: string): Promise<void>;
     setFormation(group: Group, formation: string): Promise<void>;
     addGroupEventHandlers(group: Group): Promise<void>;
+    getGroupLeaderPosition(group: Group): Promise<Point3D | null>;
 }
 
 export interface GameEventDispatcher {
@@ -496,6 +497,7 @@ export class Group {
     private signalListeners: SignalListener[];
     private activeTask: Task | null;
     private executor: GameExecutor;
+    private position: Point3D | null;
 
     constructor(id: string, name: string, executor: GameExecutor) {
         this.id = id;
@@ -511,6 +513,7 @@ export class Group {
         this.executor = executor;
         this.listeners = [];
         this.signalListeners = [];
+        this.position = null;
     }
 
     public getCurrentTask(): Task | null {
@@ -592,6 +595,12 @@ export class Group {
         }
     }
 
+    public getPosition(): Point3D {
+        if (!this.position) {
+            throw Error(`Position of the group ${this.name} wasn't retrieved yet`);
+        }
+        return this.position;
+    }
 
     public async executeImmediately(task: Task) {
         this.activeTask = task;
@@ -664,6 +673,14 @@ export class Group {
             }
             this.executeNext();
         }
+    }
+
+    public async updateSituationalData() {
+        const newPos = await this.executor.getGroupLeaderPosition(this);
+        if (!newPos) {
+            throw Error(`Error when updating situational data for group ${this.name}: retrieved position is null`);
+        }
+        this.position = newPos;
     }
 }
 

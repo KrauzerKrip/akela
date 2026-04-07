@@ -305,7 +305,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
                     primary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
                     secondary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
                 }
-            };//await this.getUnitLoadout(tempUnit);
+            };//await this.getUnitLoadout(tempUnit); @TODO uncomment it
             units.push(new Unit(id, name, loadout, []));
         }
         return units;
@@ -382,6 +382,19 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
             vehicles.push(vehicle);
         }
         return vehicles;
+    }
+
+    public async getGroupLeaderPosition(group: Group): Promise<Point3D | null> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["getGroupLeaderPosition", armaGroupNetId]]);
+            const data = result[0]?.[2];
+            if (Array.isArray(data) && data.length > 0 && data[0]?.[0] === "error") {
+                return null;
+            }
+            return { x: data[0], y: data[1], z: data[2] };
+        }
+        return null;
     }
 
     public async executeTask(task: Task) {
