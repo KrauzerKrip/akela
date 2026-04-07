@@ -5,39 +5,57 @@ export interface Event {
     type: string;
 }
 
-export interface GroupEvent extends Event {
+export interface EngineGroupEvent extends Event {
     groupId: string;
 }
 
-export interface UnitKilledEvent extends GroupEvent {
+export interface UnitKilledEvent extends EngineGroupEvent {
     type: "UNIT_KILLED";
     unitId: string;
     // fields "killer" and "instigator" omitted because the current domain model doesn't require them
 }
 
-export interface EnemyDetectedEvent extends GroupEvent {
+export interface EnemyDetectedEvent extends EngineGroupEvent {
     type: "ENEMY_DETECTED";
     newTargetId?: string;
 }
 
-export interface WaypointCompleteEvent extends GroupEvent {
+export interface WaypointCompleteEvent extends EngineGroupEvent {
     type: "WAYPOINT_COMPLETE";
     waypointId: string;
 }
 
-export interface CombatModeChangedEvent extends GroupEvent {
+export interface CombatModeChangedEvent extends EngineGroupEvent {
     type: "COMBAT_MODE_CHANGED";
     newMode: string;
 }
 
-export interface TaskCompleteEvent extends GroupEvent {
+export interface TaskCompleteEvent extends EngineGroupEvent {
     type: "TASK_COMPLETE";
     taskId: string;
 }
 
-export interface SignalEvent extends GroupEvent {
+export interface SignalEvent extends EngineGroupEvent {
     type: "SIGNAL",
     signal: Signal;
+}
+
+export interface TacticalGroupEvent extends Event {
+    groupId: string;
+}
+
+export interface EnemyContactEvent extends TacticalGroupEvent {
+    type: "ENEMY_CONTACT";
+    targetIds: string[];
+    contactCount: number;
+}
+
+export interface EngagedInCombatEvent extends TacticalGroupEvent {
+    type: "ENGAGED_IN_COMBAT";
+}
+
+export interface CombatEndedEvent extends TacticalGroupEvent {
+    type: "COMBAT_ENDED";
 }
 
 export interface Signal {
@@ -60,7 +78,7 @@ export interface GameExecutor {
 }
 
 export interface GameEventDispatcher {
-    addGroupHandler<EventType extends GroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void;
+    addGroupHandler<EventType extends EngineGroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void;
 }
 
 export interface Weapon {
@@ -228,7 +246,7 @@ export class Push extends Task {
 
         // Return a Promise that resolves when the domain event fires
         return new Promise((resolve) => {
-            const completionListener = (event: GroupEvent) => {
+            const completionListener = (event: EngineGroupEvent) => {
                 if (event.type === "WAYPOINT_COMPLETE") {
                     const wpEvent = event as WaypointCompleteEvent;
 
@@ -340,7 +358,7 @@ export class WaitTask extends Task {
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         console.log(`[WAIT] ${group.getName()}: waiting now`);
         return new Promise((resolve) => {
-            const completionListener = (event: GroupEvent) => {
+            const completionListener = (event: EngineGroupEvent) => {
                 if (event.type === "SIGNAL") {
                     const signalEvent = event as SignalEvent;
 
@@ -363,7 +381,7 @@ export class WaitTask extends Task {
     }
 }
 
-export type GroupEventListener = (event: GroupEvent) => void;
+export type GroupEventListener = (event: EngineGroupEvent) => void;
 
 export type SignalListener = (signal: Signal) => void;
 
@@ -447,7 +465,7 @@ export class Group {
         } as SignalEvent);
     }
 
-    public emitDomainEvent(event: GroupEvent) {
+    public emitDomainEvent(event: EngineGroupEvent) {
         for (const listener of this.listeners) {
             listener(event);
         }

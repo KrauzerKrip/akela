@@ -1,5 +1,5 @@
 import { PlanSandbox } from "./sandbox";
-import { Army, Group, GameExecutor, Waypoint, UnitKilledEvent, Unit, GameEventDispatcher, GroupEvent, Loadout } from "../army";
+import { Army, Group, GameExecutor, Waypoint, UnitKilledEvent, Unit, GameEventDispatcher, EngineGroupEvent, Loadout } from "../army";
 import * as fs from "fs";
 import * as path from "path";
 import { KiaPlanEvent } from "./models";
@@ -32,12 +32,12 @@ class DummyExecutor implements GameExecutor {
     async setFormation(group: Group, formation: string) { }
 }
 
-type GroupEventHandler = (event: GroupEvent) => void;
+type GroupEventHandler = (event: EngineGroupEvent) => void;
 
 class DummyEventDispatcher implements GameEventDispatcher {
     private eventHandlers: Map<string, Map<string, GroupEventHandler>> = new Map<string, Map<string, GroupEventHandler>>;
 
-    public fireGroupEvent(event: GroupEvent) {
+    public fireGroupEvent(event: EngineGroupEvent) {
         let groupHandlers = this.eventHandlers.get(event.groupId);
         if (groupHandlers) {
             let handler = groupHandlers.get(event.type);
@@ -47,7 +47,7 @@ class DummyEventDispatcher implements GameEventDispatcher {
         }
     }
 
-    public addGroupHandler<EventType extends GroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void {
+    public addGroupHandler<EventType extends EngineGroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void {
         if (!this.eventHandlers.has(group.id)) {
             this.eventHandlers.set(group.id, new Map<string, GroupEventHandler>());
         }

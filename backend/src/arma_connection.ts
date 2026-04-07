@@ -1,4 +1,4 @@
-import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, GroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, EngineGroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle } from "./army";
 import { GameExecutor } from "./army";
 import { Point, Point3D } from "./geography";
 import { sendArmaRequest } from "./index";
@@ -33,7 +33,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         this.groupEventHandlers = {};
     }
 
-    public addGroupHandler<EventType extends GroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void {
+    public addGroupHandler<EventType extends EngineGroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void {
         if (!this.groupEventHandlers[group.id]) {
             this.groupEventHandlers[group.id] = {};
         }
@@ -43,7 +43,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         this.groupEventHandlers[group.id][eventType].push(callback as (event: any) => void);
     }
 
-    public fireGroupEvent(event: GroupEvent): void {
+    public fireGroupEvent(event: EngineGroupEvent): void {
         const groupId = event.groupId;
         if (!groupId) return;
 
@@ -66,7 +66,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         }
     }
 
-    private parseArmaGroupEvent(eventName: string, params: any): GroupEvent | null {
+    private parseArmaGroupEvent(eventName: string, params: any): EngineGroupEvent | null {
         if (!Array.isArray(params) || params.length === 0) return null;
 
         const groupNetId = params[0];
