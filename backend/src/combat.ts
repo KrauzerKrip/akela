@@ -1,11 +1,17 @@
 import { t } from "elysia";
-import { CombatEndedEvent, CombatModeChangedEvent, EnemyContactEvent, EnemyDetectedEvent, EngagedInCombatEvent, EngineGroupEvent, Group, TacticalGroupEvent } from "./army";
+import { CombatEndedEvent, CombatModeChangedEvent, EnemyContactEvent, EnemyDetectedEvent, EngagedInCombatEvent, EngineGroupEvent, Group, TacticalGroupEvent, Task } from "./army";
+import { Point3D } from "./geography";
 
 export type TacticalEventListener = (event: TacticalGroupEvent) => void;
 
-enum GroupStatus {
+export enum GroupStatus {
     Engaged,
     Normal
+}
+
+export interface TrackedEnemy {
+    position: Point3D;
+    kind: string;
 }
 
 export class GroupCombatMonitor {
@@ -21,7 +27,7 @@ export class GroupCombatMonitor {
     private readonly BATCH_WINDOW_MS = 2000;
     private readonly FORGET_TIME_MS = 60000;
 
-    private knownEnemies = new Map<string, boolean>();
+    private knownEnemies = new Map<string, TrackedEnemy>();
     private enemyForgetTimers = new Map<string, NodeJS.Timeout>();
     private batchedTargetIds = new Set<string>();
     private batchTimer: NodeJS.Timeout | null = null;
@@ -38,6 +44,26 @@ export class GroupCombatMonitor {
 
     public subscribe(listener: TacticalEventListener) {
         this.listeners.push(listener);
+    }
+
+    public getKnownEnemyPositions(): Point3D[] {
+        const positions = [];
+        for (let [key, value] of this.knownEnemies) {
+            positions.push(value.position);
+        }
+        return positions;
+    }
+
+    public getKnownEnemies(): TrackedEnemy[] {
+        return Array.from(this.knownEnemies.values());
+    }
+
+    public getStatus(): GroupStatus {
+        return this.status;
+    }
+
+    public getCombatBehaviour(): string {
+        return this.combatBehaviour
     }
 
     private emitTacticalEvent(event: TacticalGroupEvent) {
@@ -62,7 +88,7 @@ export class GroupCombatMonitor {
         this.lastDetectionTime = Date.now();
         const targetId = event.newTargetId || "UNKNOWN";
 
-        this.knownEnemies.set(targetId, true);
+        this.knownEnemies.set(targetId, { position: event.position, kind: event.kind });
         if (this.enemyForgetTimers.has(targetId)) {
             clearTimeout(this.enemyForgetTimers.get(targetId)!);
         }

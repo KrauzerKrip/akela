@@ -278,6 +278,10 @@ export class Push extends Task {
         });
     }
 
+    public getFinalWaypointPosition(): Point {
+        return this.waypoints[this.waypoints.length - 1].position;
+    }
+
     public changeStanceTo(stance: Stance) {
         this.stanceChangeTo = stance;
     }
@@ -332,6 +336,10 @@ export class Assault extends Task {
         });
     }
 
+    public getFinalWaypointPosition(): Point {
+        return this.waypoints[this.waypoints.length - 1].position;
+    }
+
     public changeStanceTo(stance: Stance) {
         this.stanceChangeTo = stance;
     }
@@ -380,6 +388,10 @@ export class Retreat extends Task {
 
             group.subscribe(completionListener);
         });
+    }
+
+    public getFinalWaypointPosition(): Point {
+        return this.waypoints[this.waypoints.length - 1].position;
     }
 
     public static fromWaypoints(waypoints: Waypoint[], name: string) {
