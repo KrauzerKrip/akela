@@ -187,7 +187,7 @@ Because a client can send multiple queries in a single HTTP polling request, the
 ### 14. `getGroupLeaderPosition`
 * **Description**: Get PositionAGLS of the group's leader.
 * **Query Argument**: `string` (Group `netId`)
-* **Returns (`queryResult`)** `[number, number, number]` (PositionAGL (Above Ground Level and Surfaces)). If the group is not found, returns `["error", "Group not found or is null"]`.
+* **Returns (`queryResult`)** `[number, number, number]` (PositionAGLS (Above Ground Level and Surfaces)). If the group is not found, returns `["error", "Group not found or is null"]`.
 
 ### 15. `addEventHandlers`
 *   **Description**: Attaches several group-level event handlers (`CombatModeChanged`, `UnitKilled`, `WaypointComplete`, `EnemyDetected`) to the specified group. When triggered, these invoke `AkelaMod.on_event` to push payloads asynchronously back to the backend.
@@ -223,7 +223,7 @@ These events are pushed asynchronously from the Arma 3 environment directly to t
 
 ### 4. `EnemyDetected`
 *   **Description**: Triggered when the group detects a new enemy target.
-*   **Params**: `[string, string]` (`[group_netId, newTarget_netId]`)
+*   **Params**: `[string, string, [number, number, number], string]` (`[group_netId, newTarget_netId, positionAGLS, kind]`)
 
 ### Unknown Command Fallback
 If an unsupported `queryType` is passed to SQF via Python, it returns a literal error string message.

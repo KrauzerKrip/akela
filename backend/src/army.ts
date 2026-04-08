@@ -19,6 +19,7 @@ export interface EnemyDetectedEvent extends EngineGroupEvent {
     type: "ENEMY_DETECTED";
     newTargetId?: string;
     position: Point3D;
+    kind: string;
 }
 
 export interface WaypointCompleteEvent extends EngineGroupEvent {

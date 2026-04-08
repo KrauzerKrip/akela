@@ -105,12 +105,13 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
                 const targetId = params[1];
                 const positionAgls = params[2];
                 const position: Point3D = { x: positionAgls[0], y: positionAgls[1], z: positionAgls[2] };
-
+                const kind = params[3];
                 return {
                     type: "ENEMY_DETECTED",
                     groupId,
                     newTargetId: targetId,
-                    position: position
+                    position: position,
+                    kind: kind
                 } as EnemyDetectedEvent;
             }
         }

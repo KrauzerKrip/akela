@@ -227,7 +227,27 @@ scriptName "Pythia_Polling_Loop";
                             }];
                             _grp addEventHandler ["EnemyDetected", {
                                 params ["_group", "_newTarget"];
-                                ["AkelaMod.on_event", ["EnemyDetected", [netId _group, netId _newTarget, getPos _newTarget]]] call py3_fnc_callExtension;
+                            
+                                private _type = "Unknown";
+                            
+                                // Sort the target based on the hierarchy in your table
+                                call {
+                                    if (_newTarget isKindOf "Man") exitWith { _type = "Soldier" };
+                                    if (_newTarget isKindOf "Tank") exitWith { _type = "Tank" };
+                                    if (_newTarget isKindOf "Wheeled_APC_F") exitWith { _type = "WheeledAPC" };
+                                    if (_newTarget isKindOf "Tracked_APC") exitWith { _type = "TrackedAPC" };
+                                    if (_newTarget isKindOf "Helicopter") exitWith { _type = "Helicopter" };
+                                    if (_newTarget isKindOf "Plane") exitWith { _type = "Plane" };
+                                    if (_newTarget isKindOf "Ship") exitWith { _type = "Ship" };
+                                    if (_newTarget isKindOf "StaticWeapon") exitWith { _type = "StaticWeapon" };
+                                    if (_newTarget isKindOf "Car") exitWith { _type = "Car" };
+                                };
+                            
+                                // Pass the type as the 4th element in your data array
+                                ["AkelaMod.on_event", [
+                                    "EnemyDetected", 
+                                    [netId _group, netId _newTarget, getPos _newTarget, _type]
+                                ]] call py3_fnc_callExtension;
                             }];
                             _queryResult = true;
                         } else {
