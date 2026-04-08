@@ -21,6 +21,7 @@ export interface ContactSitrep {
 }
 
 export interface Sitrep {
+    groupName: string;
     position: Point;
     status: GroupSitrepStatus;
     effectiveness: number;
@@ -60,6 +61,7 @@ export function createSitrep(group: Group, monitor: GroupCombatMonitor): Sitrep 
     const enemies: TrackedEnemy[] = monitor.getKnownEnemies();
 
     return {
+        groupName: group.getName(),
         position: { x: pos.x, y: pos.y },
         status: status,
         effectiveness: effectiveness,
