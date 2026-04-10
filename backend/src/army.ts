@@ -50,6 +50,7 @@ export interface EnemyContactEvent extends TacticalGroupEvent {
     type: "ENEMY_CONTACT";
     targetIds: string[];
     contactCount: number;
+    kind: string;
 }
 
 export interface EngagedInCombatEvent extends TacticalGroupEvent {
@@ -586,6 +587,14 @@ export class Group {
 
     public getName(): string {
         return this.name;
+    }
+
+    public getUnits(): Unit[] {
+        return this.units;
+    }
+
+    public getVehicles(): Vehicle[] {
+        return this.vehicles;
     }
 
     public getCurrentWaypoint(): Waypoint | null {

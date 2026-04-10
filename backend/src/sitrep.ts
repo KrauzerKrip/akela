@@ -1,4 +1,4 @@
-import { Group, Push } from "./army";
+import { Group, Loadout, Push, Vehicle } from "./army";
 import { GroupCombatMonitor, GroupStatus, TrackedEnemy } from "./combat";
 import { Point, Point3D } from "./geography";
 
@@ -20,13 +20,60 @@ export interface ContactSitrep {
     position: Point;
 }
 
+type UnitRole = "Rifleman" | "AT" | "AA";
+
+export interface UnitSitrep {
+    role: UnitRole;
+}
+
 export interface Sitrep {
     groupName: string;
+    units: UnitSitrep[];
+    vehicles: string[];
     position: Point;
     status: GroupSitrepStatus;
     effectiveness: number;
     task: TaskSitrep | null;
     contacts: ContactSitrep[];
+}
+
+const antiTankWeapons: string[] = ["launch_B_Titan_short_F", "launch_B_Titan_short_tna_F", "launch_I_Titan_short_F", "launch_MRAWS_green_F", "launch_MRAWS_green_rail_F", "launch_MRAWS_olive_F", "launch_MRAWS_olive_rail_F", "launch_MRAWS_sand_F", "launch_MRAWS_sand_rail_F", "launch_NLAW_F", "launch_O_Titan_short_F", "launch_O_Titan_short_ghex_F", "launch_Titan_short_F", "launch_O_Vorona_brown_F", "launch_O_Vorona_green_F", "launch_RPG32_camo_F", "launch_RPG32_F", "launch_RPG32_ghex_F", "launch_RPG32_green_F", "launch_RPG7_F"];
+const antiAirWeapons: string[] = [
+    "launch_B_Titan_F",          // Titan MPRL (Sand)
+    "launch_B_Titan_olive_F",    // Titan MPRL (Olive)
+    "launch_B_Titan_tna_F",      // Titan MPRL (Tropic)
+    "launch_I_Titan_F",          // Titan MPRL (Digital)
+    "launch_I_Titan_eaf_F",      // Titan MPRL (Geometric)
+    "launch_O_Titan_F",          // Titan MPRL (Hex)
+    "launch_O_Titan_ghex_F",     // Titan MPRL (Green Hex)
+    "launch_Titan_F"             // Titan MPRL (Base/Generic)
+];
+
+function infereRole(loadout: Loadout): UnitRole {
+    let role: UnitRole = "Rifleman";
+
+    if (!loadout.weapons) {
+        throw Error(`Couldn't infere role for unit: loadout.weapons is null`);
+    }
+
+    if (loadout.weapons.primary && loadout.weapons.primary.base) {
+        if (antiTankWeapons.includes(loadout.weapons.primary.base)) {
+            role = "AT";
+        }
+        if (antiAirWeapons.includes(loadout.weapons.primary.base)) {
+            role = "AA";
+        }
+    }
+    if (loadout.weapons.secondary && loadout.weapons.secondary.base) {
+        if (antiTankWeapons.includes(loadout.weapons.secondary.base)) {
+            role = "AT";
+        }
+        if (antiAirWeapons.includes(loadout.weapons.secondary.base)) {
+            role = "AA";
+        }
+    }
+
+    return role;
 }
 
 export function createSitrep(group: Group, monitor: GroupCombatMonitor): Sitrep {
@@ -60,8 +107,15 @@ export function createSitrep(group: Group, monitor: GroupCombatMonitor): Sitrep 
 
     const enemies: TrackedEnemy[] = monitor.getKnownEnemies();
 
+    const units = group.getUnits();
+    const unitSitreps: UnitSitrep[] = units.map(u => { return infereRole(u.loadout) }).map(r => { return { role: r }; });
+    const vehicles = group.getVehicles();
+    const vehicleNames = vehicles.map(v => { return v.name });
+
     return {
         groupName: group.getName(),
+        units: unitSitreps,
+        vehicles: vehicleNames,
         position: { x: pos.x, y: pos.y },
         status: status,
         effectiveness: effectiveness,
