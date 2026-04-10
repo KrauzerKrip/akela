@@ -1,57 +1,92 @@
-import { FunctionTool, InvocationContext, LlmAgent, Context, InMemoryRunner } from '@google/adk';
+import { FunctionTool, InvocationContext, LlmAgent, Context, InMemoryRunner, BaseSessionService, Runner, isFinalResponse } from '@google/adk';
 import { createUserContent } from '@google/genai';
 import { z } from 'zod';
+import * as fs from 'fs';
+import path from 'path';
+import { IntelPromptFormatter } from './format';
 
-/* Mock tool implementation */
-const getCurrentTime = new FunctionTool({
-    name: 'get_current_time',
-    description: 'Returns the current time in a specified city.',
-    parameters: z.object({
-        city: z.string().describe("The name of the city for which to retrieve the current time."),
-    }),
-    execute: ({ city }) => {
-        return { status: 'success', report: `The current time in ${city} is 10:30 AM` };
-    },
-});
+export class Image {
+    private readonly path: string;
 
-export const rootAgent = new LlmAgent({
-    name: 'hello_time_agent',
-    model: 'gemini-2.5-flash',
-    description: 'Tells the current time in a specified city.',
-    instruction: `You are a helpful assistant that tells the current time in a city.
-                Use the 'getCurrentTime' tool for this purpose.`,
-    tools: [getCurrentTime],
-});
-
-const runner = new InMemoryRunner({
-    agent: rootAgent,
-})
-
-const session = await runner.sessionService.createSession({
-    appName: "test_app",
-    userId: "test_user"
-})
-
-const n = runner.runAsync({
-    sessionId: session.id,
-    userId: session.userId,
-    newMessage: 
-})
-
-const newMessage = runner.runAsync({
-    sessionId: session.id,
-    userId: session.userId,
-    newMessage: {
-        role: "user",
-        parts: [
-            { text: "Test" },
-            {
-                inlineData: {
-
-                }
-            }
-        ]
+    constructor(path: string) {
+        this.path = path;
     }
-})
 
-rootAgent.runAsync(InvocationContext.)
+    public getBase64(): string {
+        return fs.readFileSync(this.path).toString('base64');
+    }
+}
+
+export interface Intel {
+    images: Image[];
+    observations: string[];
+}
+
+
+export class IntelAgent {
+    private formatter: IntelPromptFormatter;
+    private sessionService: BaseSessionService;
+    private agent: LlmAgent;
+    private runner: Runner;
+
+    constructor(formatter: IntelPromptFormatter, sessionService: BaseSessionService) {
+        this.formatter = formatter;
+        this.sessionService = sessionService;
+        const systemPrompt = this.formatter.formatSystemPrompt();
+
+        this.agent = new LlmAgent({
+            name: "intel_agnet",
+            model: "gemini-3.1-pro-preview",
+            description: "Analyzes intelligence observations and images.",
+            instruction: systemPrompt,
+        });
+        this.runner = new Runner({
+            agent: this.agent,
+            sessionService: sessionService,
+            appName: "intel-akela"
+        });
+    }
+
+    public async analyze(intel: Intel): Promise<string> {
+        const userPrompt = this.formatter.formatUserPrompt(intel.observations);
+
+        const session = await this.sessionService.createSession({
+            appName: "intel-akela",
+            userId: process.env.SESSION_USER_ID || "akela_user",
+        });
+
+        const parts: any[] = [{ text: userPrompt }];
+        for (const image of intel.images) {
+            parts.push({
+                inlineData: {
+                    mimeType: 'image/jpeg',
+                    data: image.getBase64()
+                }
+            });
+        }
+
+        let finalResponseText = "Agent did not produce a final response.";
+
+        const eventStream = this.runner.runAsync({
+            sessionId: session.id,
+            userId: session.userId,
+            newMessage: {
+                role: 'user',
+                parts: parts
+            }
+        });
+
+        for await (const event of eventStream) {
+            if (isFinalResponse(event)) {
+                if (event.content && event.content.parts && event.content.parts.length > 0) {
+                    finalResponseText = event.content.parts[0].text || "";
+                } else if (event.actions && (event.actions as any).escalate) {
+                    finalResponseText = `Agent escalated: ${(event as any).errorMessage || 'No specific message.'}`;
+                }
+                break;
+            }
+        }
+
+        return finalResponseText;
+    }
+}
