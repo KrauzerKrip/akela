@@ -106,13 +106,25 @@ export class GroupCombatMonitor {
                     this.status = GroupStatus.Engaged;
                 }
 
-                const targetIds = Array.from(this.batchedTargetIds);
-                this.emitTacticalEvent({
-                    type: "ENEMY_CONTACT",
-                    groupId: this.group.id,
-                    targetIds: targetIds,
-                    contactCount: targetIds.length
-                } as EnemyContactEvent);
+                const targetIdsByKind = new Map<string, string[]>();
+                for (const targetId of this.batchedTargetIds) {
+                    const enemy = this.knownEnemies.get(targetId);
+                    const kind = enemy?.kind || "UNKNOWN";
+                    if (!targetIdsByKind.has(kind)) {
+                        targetIdsByKind.set(kind, []);
+                    }
+                    targetIdsByKind.get(kind)!.push(targetId);
+                }
+
+                for (const [kind, ids] of targetIdsByKind) {
+                    this.emitTacticalEvent({
+                        type: "ENEMY_CONTACT",
+                        groupId: this.group.id,
+                        targetIds: ids,
+                        contactCount: ids.length,
+                        kind: kind
+                    } as EnemyContactEvent);
+                }
 
                 this.batchedTargetIds.clear();
                 this.batchTimer = null;

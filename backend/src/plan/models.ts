@@ -12,9 +12,26 @@ export interface PlanEvent {
     type: string;
 }
 
+
 export interface KiaPlanEvent extends PlanEvent {
     type: "KIA";
 }
+
+export interface EnemyContactPlanEvent extends PlanEvent {
+    type: "ENEMY_CONTACT";
+    count: number;
+    kind: "Soldier" | "Tank" | "WheeledAPC" | "TrackedAPC" | "Helicopter" | "Plane" | "Ship" | "StaticWeapon" | "Car";
+}
+
+export interface EngagedInCombatPlanEvent extends PlanEvent {
+    type: "ENGAGED_IN_COMBAT";
+}
+
+export interface CombatEndedPlanEvent extends PlanEvent {
+    type: "COMBAT_ENDED";
+}
+
+
 
 export interface TaskCompletePlanEvent extends PlanEvent {
     type: "TASK_COMPLETE";

@@ -1,7 +1,7 @@
 // DO NOT USE THIS FILE DIRECTLY
-// This file is to use with isolated-vm for plan sandboxing.
+// This file is to use with quickjs-emscripten for plan sandboxing.
 
-global.Event = { NEW_CONTACT: 'NEW_CONTACT', KIA: 'KIA' };
+global.Event = { ENEMY_CONTACT: 'ENEMY_CONTACT', KIA: 'KIA', ENGAGED_IN_COMBAT: "ENGAGED_IN_COMBAT", COMBAT_ENDED: "COMBAT_ENDED" };
 
 class Task {
     constructor(type, name) {
