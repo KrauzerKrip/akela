@@ -13,9 +13,35 @@ export class YamlSitrepFormatter implements SitrepFormatter {
         return `${formatCoord(p.x)}-${formatCoord(p.y)}`;
     }
 
+    /**
+         * Helper to convert an array of strings/roles into a summarized "2x Role, 1x Other" string
+         */
+    private summarizeItems(items: string[]): string {
+        const counts = items.reduce((acc, item) => {
+            acc[item] = (acc[item] || 0) + 1;
+            return acc;
+        }, {} as Record<string, number>);
+
+        return Object.entries(counts)
+            .map(([name, count]) => `${count}x ${name}`)
+            .join(", ");
+    }
+
     public format(sitrep: Sitrep): string {
         const lines: string[] = [];
         lines.push(`${sitrep.groupName}:`);
+
+        // Formats units: [3x Rifleman, 1x AT]
+        const unitRoles = sitrep.units.map(u => u.role);
+        lines.push(`    Units: [${this.summarizeItems(unitRoles)}]`);
+
+        // Formats vehicles: [1x M1 Abrams, 2x Humvee]
+        if (sitrep.vehicles && sitrep.vehicles.length > 0) {
+            lines.push(`    Vehicles: [${this.summarizeItems(sitrep.vehicles)}]`);
+        } else {
+            lines.push(`    Vehicles: []`);
+        }
+
         lines.push(`    Grid: "${this.formatGrid(sitrep.position)}"`);
 
         const statusStr = sitrep.status === GroupSitrepStatus.Engaged ? "Engaged" : "Normal";
@@ -81,6 +107,7 @@ export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
 
 export interface ExecutionPromptFormatter {
     format(sitreps: Sitrep[]): string;
+    // @TODO
 }
 
 export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter {
@@ -100,6 +127,42 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
         };
 
         let formatted = this.template;
+        for (const [key, value] of Object.entries(variables)) {
+            formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
+        }
+
+        return formatted;
+    }
+}
+
+export interface PlanPromptFormatter {
+    formatSystemPrompt(): string;
+    formatUserPrompt(sitreps: Sitrep[]): string;
+}
+
+export class SimplePlanPromptFormatter implements PlanPromptFormatter {
+    private sitrepFormatter: SitrepFormatter;
+    private systemPromptTemplate: string;
+    private userPromptTemplate: string;
+
+    constructor(sitrepFormatter: SitrepFormatter) {
+        this.sitrepFormatter = sitrepFormatter;
+        this.systemPromptTemplate = readFileSync(join(__dirname, "prompts", "plan_system_prompt.md"), "utf-8");
+        this.userPromptTemplate = readFileSync(join(__dirname, "prompts", "plan_user_prompt.md"), "utf-8");
+    }
+
+    public formatSystemPrompt(): string {
+        return this.systemPromptTemplate;
+    }
+
+    public formatUserPrompt(sitreps: Sitrep[]): string {
+        const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
+
+        const variables: Record<string, string> = {
+            "SITREP_BLOCK": sitrepStr,
+        };
+
+        let formatted = this.userPromptTemplate;
         for (const [key, value] of Object.entries(variables)) {
             formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
         }
