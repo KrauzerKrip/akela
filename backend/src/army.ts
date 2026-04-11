@@ -283,6 +283,11 @@ export class Push extends Task {
         return this.waypoints[this.waypoints.length - 1].position;
     }
 
+    // from the first to the last
+    public getWaypointPositions(): Point[] {
+        return this.waypoints.map(w => w.position);
+    }
+
     public changeStanceTo(stance: Stance) {
         this.stanceChangeTo = stance;
     }
@@ -341,6 +346,11 @@ export class Assault extends Task {
         return this.waypoints[this.waypoints.length - 1].position;
     }
 
+    // from the first to the last
+    public getWaypointPositions(): Point[] {
+        return this.waypoints.map(w => w.position);
+    }
+
     public changeStanceTo(stance: Stance) {
         this.stanceChangeTo = stance;
     }
@@ -395,6 +405,11 @@ export class Retreat extends Task {
         return this.waypoints[this.waypoints.length - 1].position;
     }
 
+    // from the first to the last
+    public getWaypointPositions(): Point[] {
+        return this.waypoints.map(w => w.position);
+    }
+
     public static fromWaypoints(waypoints: Waypoint[], name: string) {
         return new Retreat(uuidv4(), name, waypoints);
     }
@@ -439,6 +454,10 @@ export class SequenceTask extends Task {
                 group.emitSignal(signal);
             }
         }
+    }
+
+    public getTasks(): Task[] {
+        return this.subTasks;
     }
 }
 

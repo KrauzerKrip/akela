@@ -10,6 +10,7 @@ const taskA = new Push([{ x: 10, y: 10 }], "Push forward")
         }
     });
 const taskA2 = new Report("it should not be executed or be in the queue if casualities > 0", "Name: test report");
+const taskA3 = new Assault([{ x: 10, y: 5 }], "Attack now!");
 
 const taskB = new Sequence("Wait and Report").then(
     new Wait(phaseLineBlue)
@@ -22,4 +23,5 @@ const taskB = new Sequence("Wait and Report").then(
 
 groups["Alpha"].enqueue(taskA);
 groups["Alpha"].enqueue(taskA2);
+groups["Alpha"].enqueue(taskA3);
 groups["Bravo"].executeImmediately(taskB);
