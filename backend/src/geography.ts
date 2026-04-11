@@ -3,6 +3,8 @@ import path from 'path';
 import { exec } from 'child_process';
 import { randomUUID } from 'crypto';
 import { promisify } from 'util';
+import { Session } from './session';
+import sizeOf from 'image-size'; // Import to read image dimensions
 
 const execAsync = promisify(exec);
 
@@ -17,67 +19,132 @@ export interface Point3D {
     z: number;
 }
 
+// Defined types for the requested image variants
+export type MapLayerType = 'frame_primitives' | 'frame_satellite' | 'primitives' | 'satellite';
+
 export class GameMapArea {
     public readonly leftBottomCorner: Point;
     public readonly rightTopCorner: Point;
     private readonly id: string;
+    private readonly areaDir: string;
 
-    public constructor(leftBottomCorner: Point, rightTopCorner: Point, id: string) {
+    public constructor(leftBottomCorner: Point, rightTopCorner: Point, id: string, areaDir: string) {
         this.id = id;
+        this.areaDir = areaDir; // Path to <session_areas>/<area_id>/
         this.leftBottomCorner = leftBottomCorner;
         this.rightTopCorner = rightTopCorner;
     }
 
-    public getBase64Image(sattelite_layer: boolean): string {
-        const filePath = this.getPath(sattelite_layer);
+    /**
+     * Reads the specific PNG layer and returns it as a base64 string.
+     */
+    public getBase64Image(layer: MapLayerType): string {
+        const filePath = this.getPath(layer);
         return fs.readFileSync(filePath).toString('base64');
     }
 
-    private getPath(sattelite_layer: boolean): string {
-        if (!process.env.BASE_AREA_DIR || !process.env.MAP_FILE_EXTENSION) {
-            throw new Error("Environment variables BASE_AREA_DIR and MAP_FILE_EXTENSION must be defined");
+    /**
+     * 1. Returns the resolution (width and height in pixels) 
+     * of the images without a frame.
+     */
+    public getImageResolution(): { width: number; height: number } {
+        // We use 'satellite' as the reference since you mentioned primitives 
+        // and satellite share the same resolution.
+        const filePath = this.getPath('satellite');
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`File not found: ${filePath}`);
         }
-        return path.join(process.env.BASE_AREA_DIR, this.id +
-            (sattelite_layer ? "_sat" : "") +
-            "." +
-            process.env.MAP_FILE_EXTENSION)
+
+        const fileBuffer = fs.readFileSync(filePath);
+        const dimensions = sizeOf(fileBuffer); // Works with Uint8Array/Buffer
+        if (!dimensions.width || !dimensions.height) {
+            throw new Error("Could not determine image dimensions.");
+        }
+
+        return {
+            width: dimensions.width,
+            height: dimensions.height
+        };
+    }
+
+    /**
+     * 2. Returns the map resolution (meters per pixel).
+     * This calculates how many Arma 3 meters are represented by a single pixel.
+     */
+    public getMetersPerPixel(): { x: number; y: number } {
+        const { width, height } = this.getImageResolution();
+
+        // Calculate the real-world distance in meters
+        const deltaX = Math.abs(this.rightTopCorner.x - this.leftBottomCorner.x);
+        const deltaY = Math.abs(this.rightTopCorner.y - this.leftBottomCorner.y);
+
+        return {
+            x: deltaX / width,
+            y: deltaY / height
+        };
+    }
+
+    /**
+     * Constructs the path to one of the 4 generated files.
+     */
+    public getPath(layer: MapLayerType): string {
+        return path.join(this.areaDir, `${layer}.png`);
     }
 }
 
 export class GameMap {
+    private session: Session;
+
+    constructor(session: Session) {
+        this.session = session;
+    }
 
     public async extractArea(leftBottomCorner: Point, rightTopCorner: Point): Promise<GameMapArea> {
-        if (!process.env.BASE_AREA_DIR || !process.env.MAP_FILE_EXTENSION) {
-            throw new Error("Environment variables BASE_AREA_DIR and MAP_FILE_EXTENSION must be defined");
+        const pythonExecutable = process.env.PYTHON_EXEC;
+        if (!pythonExecutable) {
+            throw new Error("Environment variable PYTHON_EXEC must be defined");
         }
 
         const id = randomUUID();
-        const ext = process.env.MAP_FILE_EXTENSION;
-        const basePath = path.join(process.env.BASE_AREA_DIR, `${id}.${ext}`);
-        const satPath = path.join(process.env.BASE_AREA_DIR, `${id}_sat.${ext}`);
+        // Create the specific directory for this area
+        const areaDir = path.join(this.session.getAreasDirectory(), id);
 
-        // Resolve absolute path to the Python script
-        const scriptPath = path.resolve(__dirname, '../../python/extract_area.py');
-        const pythonExecutable = process.env.PYTHON_EXEC;
-
-        if (!pythonExecutable) {
-            throw new Error("Environment variable PYTHON_EXEC must be defined")
+        if (!fs.existsSync(areaDir)) {
+            fs.mkdirSync(areaDir, { recursive: true });
         }
 
+        const scriptPath = process.env.AREA_SCRIPT_PATH;
         const { x: x1, y: y1 } = leftBottomCorner;
         const { x: x2, y: y2 } = rightTopCorner;
 
-        // Generate base map without satellite background
-        const baseCmd = `${pythonExecutable} ${scriptPath} ${x1} ${y1} ${x2} ${y2} --out ${basePath} --no-sat`;
+        // Helper to build the command string
+        const buildCmd = (fileName: string, extraArgs: string = "") => {
+            const outPath = path.join(areaDir, `${fileName}.png`);
+            return `${pythonExecutable} ${scriptPath} extract ${x1} ${y1} ${x2} ${y2} --out ${outPath} ${extraArgs}`;
+        };
 
-        // Generate satellite map with background
-        const satCmd = `${pythonExecutable} ${scriptPath} ${x1} ${y1} ${x2} ${y2} --out ${satPath}`;
+        // Define the 4 specific generation tasks
+        const tasks = [
+            // 1. frame_primitives: No satellite, has frame and grid
+            execAsync(buildCmd('frame_primitives', '--no-sat --frame --grid')),
 
-        await Promise.all([
-            execAsync(baseCmd),
-            execAsync(satCmd)
-        ]);
+            // 2. frame_satellite: Has satellite, has frame and grid
+            execAsync(buildCmd('frame_satellite', '--frame --grid')),
 
-        return new GameMapArea(leftBottomCorner, rightTopCorner, id);
+            // 3. primitives: No satellite, no frame
+            execAsync(buildCmd('primitives', '--no-sat')),
+
+            // 4. satellite: Has satellite, no frame
+            execAsync(buildCmd('satellite', ''))
+        ];
+
+        try {
+            await Promise.all(tasks);
+        } catch (error) {
+            console.error("Error generating map layers:", error);
+            throw error;
+        }
+
+        return new GameMapArea(leftBottomCorner, rightTopCorner, id, areaDir);
     }
 }

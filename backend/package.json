@@ -9,6 +9,7 @@
     "@google/adk": "^0.6.0",
     "@google/genai": "^1.47.0",
     "elysia": "latest",
+    "image-size": "^2.0.2",
     "quickjs-emscripten": "^0.32.0",
     "quickjs-emscripten-sync": "1.8.0",
     "uuid": "^13.0.0"
