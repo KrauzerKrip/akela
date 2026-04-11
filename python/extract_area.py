@@ -106,6 +106,8 @@ def main():
     parser.add_argument("--use-grid", action="store_true", help="Use tiles with grid overlay instead of raw satellite tiles")
     parser.add_argument("--no-features", action="store_true", help="Do not draw geojson features")
     parser.add_argument("--no-sat", action="store_true", help="Do not draw background satellite image (primitives only)")
+    parser.add_argument("--frame", action="store_true", help="Draw frame (legend, axis names, numbers)")
+    parser.add_argument("--grid", action="store_true", help="Draw grid")
     args = parser.parse_args()
 
     max_map_size = 30720
@@ -240,19 +242,26 @@ def main():
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_coord))
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_coord))
     
-    ax.tick_params(axis='both', colors='white', labelsize=16, 
-                   bottom=True, top=True, left=True, right=True,
-                   labelbottom=True, labeltop=True, labelleft=True, labelright=True)
-                   
-    ax.set_xlabel("Easting (Arma XY)", color='white', fontsize=18, weight='bold', labelpad=15)
-    ax.set_ylabel("Northing (Arma XY)", color='white', fontsize=18, weight='bold', labelpad=15)
-    
-    for spine in ax.spines.values():
-        spine.set_edgecolor('white')
-        spine.set_linewidth(2.0)
-        spine.set_zorder(15)
+    if args.frame:
+        ax.tick_params(axis='both', colors='white', labelsize=16, 
+                       bottom=True, top=True, left=True, right=True,
+                       labelbottom=True, labeltop=True, labelleft=True, labelright=True)
+                       
+        ax.set_xlabel("Easting (Arma XY)", color='white', fontsize=18, weight='bold', labelpad=15)
+        ax.set_ylabel("Northing (Arma XY)", color='white', fontsize=18, weight='bold', labelpad=15)
+        
+        for spine in ax.spines.values():
+            spine.set_edgecolor('white')
+            spine.set_linewidth(2.0)
+            spine.set_zorder(15)
+    else:
+        ax.tick_params(which='both', bottom=False, top=False, left=False, right=False, 
+                       labelbottom=False, labeltop=False, labelleft=False, labelright=False)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
 
-    ax.grid(True, which='major', color='white', linestyle='-', linewidth=1.5, alpha=0.7, zorder=11)
+    if args.grid:
+        ax.grid(True, which='major', color='white', linestyle='-', linewidth=1.5, alpha=0.7, zorder=11)
     
     # ---------------------------------------------------------
     # Legend construction
@@ -270,15 +279,20 @@ def main():
         
     legend_elements.append(mlines.Line2D([0], [0], color='white', lw=1.5, linestyle='-', alpha=0.7, label='Arma Coordinates Grid'))
     
-    if legend_elements:
+    if args.frame and legend_elements:
         leg = ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.055, 1), facecolor='black', edgecolor='white', labelcolor='white', fontsize=14, framealpha=0.85)
         leg.set_zorder(20)
     # ---------------------------------------------------------
 
     fig.patch.set_facecolor('black')
     
-    plt.tight_layout(pad=3.0)
-    plt.savefig(args.out, bbox_inches='tight', facecolor=fig.get_facecolor(), pad_inches=0.2)
+    if args.frame:
+        plt.tight_layout(pad=3.0)
+        plt.savefig(args.out, bbox_inches='tight', facecolor=fig.get_facecolor(), pad_inches=0.2)
+    else:
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        plt.savefig(args.out, bbox_inches='tight', pad_inches=0, facecolor=fig.get_facecolor())
+        
     print(f"Extraction complete! Saved image to {args.out}")
 
 if __name__ == "__main__":
