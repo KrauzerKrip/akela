@@ -70,7 +70,7 @@ async function test() {
     await bravo.updateSituationalData();
 
     const sandbox = await PlanSandbox.create();
-    const code = fs.readFileSync(path.join(__dirname, "example.js"), 'utf-8');
+    const code = fs.readFileSync(path.join(__dirname, "example_visualize.js"), 'utf-8');
 
     console.log("Compiling plan...");
     const plan = sandbox.makePlan(army, code);

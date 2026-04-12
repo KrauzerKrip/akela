@@ -27,6 +27,7 @@ export interface UnitSitrep {
 }
 
 export interface Sitrep {
+    groupId: string;
     groupName: string;
     units: UnitSitrep[];
     vehicles: string[];
@@ -113,6 +114,7 @@ export function createSitrep(group: Group, monitor: GroupCombatMonitor): Sitrep 
     const vehicleNames = vehicles.map(v => { return v.name });
 
     return {
+        groupId: group.id,
         groupName: group.getName(),
         units: unitSitreps,
         vehicles: vehicleNames,

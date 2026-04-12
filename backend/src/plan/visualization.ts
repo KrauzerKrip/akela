@@ -33,8 +33,8 @@ export class PlanVisualizer {
         this.session = session;
     }
 
-    public async visualize(gameMapArea: GameMapArea, plan: Plan, army: Army): Promise<PlanVisualization> {
-        const exportDir = await this.makeOutline(gameMapArea, plan, army);
+    public async visualize(gameMapArea: GameMapArea, plan: Plan, groupPositions: Map<string, Point>): Promise<PlanVisualization> {
+        const exportDir = await this.makeOutline(gameMapArea, plan, groupPositions);
         const id = path.basename(exportDir);
         return new PlanVisualization(id, exportDir);
     }
@@ -45,7 +45,7 @@ export class PlanVisualizer {
      * @param plan 
      * @returns absolute path to the new map image file, now with overlays
      */
-    private async makeOutline(gameMapArea: GameMapArea, plan: Plan, army: Army): Promise<string> {
+    private async makeOutline(gameMapArea: GameMapArea, plan: Plan, groupPositions: Map<string, Point>): Promise<string> {
         const id = uuidv4();
         const exportDir = path.join(this.session.getPlanningDirectory(), id);
         const outline = new Outline(gameMapArea);
@@ -104,7 +104,7 @@ export class PlanVisualizer {
             const groupColor = colors[colorIdx % colors.length];
             colorIdx++;
 
-            let currentPos: Point | undefined = army.getGroupById(groupId)?.getPosition();
+            let currentPos: Point | undefined = groupPositions.get(groupId);
 
             for (const task of groupTasks[groupId]) {
                 if (task.type === "PUSH" || task.type === "ASSAULT" || task.type === "RETREAT") {

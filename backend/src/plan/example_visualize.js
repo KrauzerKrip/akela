@@ -1,0 +1,27 @@
+const phaseLineBlue = new SyncPoint("objective_surrounded");
+
+const taskA = new Push([{ x: 10, y: 10 }], "Push forward")
+    .withCombatBehaviour("AWARE")
+    .on(Event.KIA, (e, g) => { // Always use group passed in parameters in callbacks. Don't use group from global 'groups' here!!!
+        if (g.getCasualties() > 0) {
+            g.executeAndClearQueue(new Retreat([{ x: 5, y: 5 }], "Retreat now"));
+        } else {
+            g.executeImmediately(new Report("Reporting: everything is ok, we took no casualties.", "Report everything is ok"));
+        }
+    }).signals(phaseLineBlue);
+const taskA2 = new Report("it should not be executed or be in the queue if casualities > 0", "Name: test report");
+const taskA3 = new Assault([{ x: 10, y: 5 }], "Attack now!");
+
+const taskB = new Sequence("Wait and Report").then(new Push([{ x: 50, y: 20 }], "Push, Bravo!")).then(
+    new Wait(phaseLineBlue)
+        .on(Event.ENEMY_CONTACT, (e, g) => {
+            if (e.count > 5) {
+                g.executeImmediately(new Report("Reporting: a lot of enemies.", "Report many enemies"));
+            }
+        })
+).then(new Push([{ x: 35, y: 20 }], "Push, Bravo, push!"));
+
+groups["Alpha"].enqueue(taskA);
+groups["Alpha"].enqueue(taskA2);
+groups["Alpha"].enqueue(taskA3);
+groups["Bravo"].executeImmediately(taskB);
