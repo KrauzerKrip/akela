@@ -137,7 +137,7 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
 
 export interface PlanPromptFormatter {
     formatSystemPrompt(): string;
-    formatUserPrompt(sitreps: Sitrep[]): string;
+    formatUserPrompt(sitreps: Sitrep[], intel: string): string;
 }
 
 export class SimplePlanPromptFormatter implements PlanPromptFormatter {
@@ -155,11 +155,12 @@ export class SimplePlanPromptFormatter implements PlanPromptFormatter {
         return this.systemPromptTemplate;
     }
 
-    public formatUserPrompt(sitreps: Sitrep[]): string {
+    public formatUserPrompt(sitreps: Sitrep[], intel: string): string {
         const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
 
         const variables: Record<string, string> = {
             "SITREP_BLOCK": sitrepStr,
+            "INTEL_BLOCK": intel,
         };
 
         let formatted = this.userPromptTemplate;

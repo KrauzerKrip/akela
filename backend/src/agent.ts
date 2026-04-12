@@ -5,6 +5,10 @@ import * as fs from 'fs';
 import path from 'path';
 import { IntelPromptFormatter, PlanPromptFormatter } from './format';
 import { Sitrep } from './sitrep';
+import { GameMapArea, Point } from './geography';
+import { PlanVisualization, PlanVisualizer } from './plan/visualization';
+import { PlanSandbox } from './plan/sandbox';
+import { Army } from './army';
 
 export class Image {
     private readonly path: string;
@@ -96,30 +100,31 @@ export class IntelAgent {
     }
 }
 
-
+export interface PlanningResult {
+    code: string;
+    description: string;
+}
 
 export class PlanAgent {
     private formatter: PlanPromptFormatter;
     private sessionService: BaseSessionService;
-    private agent: LlmAgent;
-    private runner: Runner;
+    private planVisualizer: PlanVisualizer;
+    private planSandbox: PlanSandbox;
 
-    constructor(formatter: PlanPromptFormatter, sessionService: BaseSessionService) {
+    constructor(formatter: PlanPromptFormatter, sessionService: BaseSessionService, planSandbox: PlanSandbox, planVisualizer: PlanVisualizer) {
         this.formatter = formatter;
         this.sessionService = sessionService;
-        const systemPrompt = this.formatter.formatSystemPrompt();
+        this.planVisualizer = planVisualizer;
+        this.planSandbox = planSandbox;
+    }
 
-        this.agent = new LlmAgent({
-            name: "intel_agnet",
-            model: "gemini-3.1-pro-preview",
-            description: "Plans operations.",
-            instruction: systemPrompt,
-        });
-        this.runner = new Runner({
-            agent: this.agent,
-            sessionService: sessionService,
-            appName: "plan-akela"
-        });
+    public async plan(army: Army, sitreps: Sitrep[], intelResult: string, gameMapArea: GameMapArea): Promise<PlanningResult> {
+        const groupPositions = new Map<string, Point>();
+        for (const sitrep of sitreps) {
+            groupPositions.set(sitrep.groupId, sitrep.position);
+        }
+
+        let finalPlanCode = "";
 
         const visualizePlan = new FunctionTool({
             name: "visualize_plan",
@@ -127,14 +132,83 @@ export class PlanAgent {
             parameters: z.object({
                 code: z.string().describe("The JS code of the plan."),
             }),
-            execute: ({ code }) => {
+            execute: async ({ code }) => {
+                const plan = await this.planSandbox.makePlan(army, code);
+                const viz = await this.planVisualizer.visualize(gameMapArea, plan, groupPositions);
 
+                return {
+                    primitives_path: viz.getImagePath('primitives'),
+                    satellite_path: viz.getImagePath('satellite')
+                };
             },
         });
-    }
 
-    public async plan(sitreps: Sitrep[], maps: Maps): Promise<string> {
-        const userPrompt = this.formatter.formatUserPrompt(sitreps);
+        const commitToPlan = new FunctionTool({
+            name: "commit_to_plan",
+            description: "Saves the plan code to be included in PlanningResult.",
+            parameters: z.object({
+                code: z.string().describe("The final confirmed JS code of the plan."),
+            }),
+            execute: async ({ code }) => {
+                finalPlanCode = code;
+                return { success: true };
+            },
+        });
+
+        const systemPrompt = this.formatter.formatSystemPrompt();
+
+        const agent = new LlmAgent({
+            name: "plan_agent",
+            model: "gemini-3.1-pro-preview",
+            description: "Plans operations.",
+            instruction: systemPrompt,
+            tools: [visualizePlan, commitToPlan],
+            beforeModelCallback: async ({ request }) => {
+                for (const content of request.contents || []) {
+                    if (!content.parts) continue;
+                    const modifiedParts: any[] = [];
+                    for (const part of content.parts) {
+                        modifiedParts.push(part);
+
+                        if (part.functionResponse && part.functionResponse.name === 'visualize_plan') {
+                            const response = part.functionResponse.response as any;
+                            if (response.primitives_path) {
+                                modifiedParts.push({
+                                    text: `[Tool Response Artifact] Visualized map with primitives:`
+                                });
+                                modifiedParts.push({
+                                    inlineData: {
+                                        mimeType: 'image/png',
+                                        data: fs.readFileSync(response.primitives_path).toString('base64')
+                                    }
+                                });
+                            }
+                            if (response.satellite_path) {
+                                modifiedParts.push({
+                                    text: `[Tool Response Artifact] Visualized map with satellite layer:`
+                                });
+                                modifiedParts.push({
+                                    inlineData: {
+                                        mimeType: 'image/png',
+                                        data: fs.readFileSync(response.satellite_path).toString('base64')
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    content.parts = modifiedParts;
+                }
+                return undefined;
+            }
+        });
+
+        const runner = new Runner({
+            agent: agent,
+            sessionService: this.sessionService,
+            appName: "plan-akela"
+        });
+
+        const userPrompt = this.formatter.formatUserPrompt(sitreps, intelResult);
 
         const session = await this.sessionService.createSession({
             appName: "plan-akela",
@@ -145,19 +219,19 @@ export class PlanAgent {
         parts.push({
             inlineData: {
                 mimeType: 'image/png',
-                data: maps.primitives.getBase64()
+                data: gameMapArea.getBase64Image('primitives')
             }
         });
         parts.push({
             inlineData: {
                 mimeType: 'image/png',
-                data: maps.sattelite.getBase64()
+                data: gameMapArea.getBase64Image('satellite')
             }
         });
 
         let finalResponseText = "Agent did not produce a final response.";
 
-        const eventStream = this.runner.runAsync({
+        const eventStream = runner.runAsync({
             sessionId: session.id,
             userId: session.userId,
             newMessage: {
@@ -177,6 +251,9 @@ export class PlanAgent {
             }
         }
 
-        return finalResponseText;
+        return {
+            code: finalPlanCode,
+            description: finalResponseText
+        };
     }
 }
