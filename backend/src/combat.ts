@@ -1,5 +1,5 @@
 import { t } from "elysia";
-import { CombatEndedEvent, CombatModeChangedEvent, EnemyContactEvent, EnemyDetectedEvent, EngagedInCombatEvent, EngineGroupEvent, Group, TacticalGroupEvent, Task } from "./army";
+import { Army, CombatEndedEvent, CombatModeChangedEvent, EnemyContactEvent, EnemyDetectedEvent, EngagedInCombatEvent, EngineGroupEvent, Group, GroupEvent, TacticalGroupEvent, TacticalReportEvent, Task } from "./army";
 import { Point3D } from "./geography";
 
 export type TacticalEventListener = (event: TacticalGroupEvent) => void;
@@ -12,6 +12,43 @@ export enum GroupStatus {
 export interface TrackedEnemy {
     position: Point3D;
     kind: string;
+}
+
+export class ArmyCombatMonitor {
+    private groupCombatMonitors: Map<string, GroupCombatMonitor>;
+    private listeners: TacticalEventListener[];
+
+    constructor() {
+        this.groupCombatMonitors = new Map<string, GroupCombatMonitor>();
+        this.listeners = [];
+    }
+
+    public static fromArmy(army: Army): ArmyCombatMonitor {
+        const groups = army.getGroups();
+        const armyCobmatMonitor = new ArmyCombatMonitor();
+        groups.forEach(g => armyCobmatMonitor.addMonitorForGroup(g));
+        return armyCobmatMonitor;
+    }
+
+    public addMonitorForGroup(group: Group) {
+        const groupCombatMonitor = new GroupCombatMonitor(group);
+        groupCombatMonitor.subscribe(e => this.emitTacticalEvent(e));
+        this.groupCombatMonitors.set(group.id, groupCombatMonitor);
+    }
+
+    public getGroupMonitor(groupId: string): GroupCombatMonitor | undefined {
+        return this.groupCombatMonitors.get(groupId);
+    }
+
+    public subscribe(listener: TacticalEventListener) {
+        this.listeners.push(listener);
+    }
+
+    private emitTacticalEvent(event: TacticalGroupEvent) {
+        for (const listener of this.listeners) {
+            listener(event);
+        }
+    }
 }
 
 export class GroupCombatMonitor {
@@ -72,7 +109,7 @@ export class GroupCombatMonitor {
         }
     }
 
-    private handleRawGroupEvent(event: EngineGroupEvent) {
+    private handleRawGroupEvent(event: GroupEvent) {
         switch (event.type) {
             case "ENEMY_DETECTED":
                 this.handleEnemyDetected(event as EnemyDetectedEvent);
@@ -80,7 +117,14 @@ export class GroupCombatMonitor {
             case "COMBAT_MODE_CHANGED":
                 this.handleCombatModeChanged(event as CombatModeChangedEvent);
                 break;
-            // Handle other low-level events to derive high-level state
+            case "REPORT":
+                const newEvent: TacticalReportEvent = {
+                    groupId: event.groupId,
+                    type: "TACTICAL_REPORT",
+                    message: (event as TacticalReportEvent).message
+                }
+                this.emitTacticalEvent(newEvent);
+                break;
         }
     }
 

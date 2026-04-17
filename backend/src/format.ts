@@ -106,27 +106,52 @@ export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
 }
 
 export interface ExecutionPromptFormatter {
-    format(sitreps: Sitrep[]): string;
-    // @TODO
+    formatSystemPrompt(): string;
+    formatUserPlanPrompt(sitreps: Sitrep[], planDescription: string, planCode: string): string;
+    formatUserReportPrompt(sitreps: Sitrep[], report: string): string;
 }
 
 export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter {
     private sitrepFormatter: SitrepFormatter;
-    private template: string;
+    private systemTemplate: string;
+    private userTempalte: string;
 
     constructor(sitrepFormatter: SitrepFormatter) {
         this.sitrepFormatter = sitrepFormatter;
-        this.template = readFileSync(join(__dirname, "prompts", "execution_system_prompt.md"), "utf-8");
+        this.systemTemplate = readFileSync(join(__dirname, "prompts", "execution_system_prompt.md"), "utf-8");
+        this.userTempalte = readFileSync(join(__dirname, "prompts", "execution_user_prompt.md"), "utf-8");
     }
 
-    public format(sitreps: Sitrep[]): string {
+    public formatSystemPrompt(): string {
+        return this.systemTemplate;
+    }
+
+    public formatUserPlanPrompt(sitreps: Sitrep[], planDescription: string, planCode: string): string {
         const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
 
         const variables: Record<string, string> = {
             "SITREP_BLOCK": sitrepStr,
+            "PLAN_DESCRIPTION": planDescription,
+            "PLAN_CODE": planCode
         };
 
-        let formatted = this.template;
+        let formatted = this.userTempalte;
+        for (const [key, value] of Object.entries(variables)) {
+            formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
+        }
+
+        return formatted;
+    }
+
+    public formatUserReportPrompt(sitreps: Sitrep[], report: string): string {
+        const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
+
+        const variables: Record<string, string> = {
+            "SITREP_BLOCK": sitrepStr,
+            "REPORT": report
+        };
+
+        let formatted = this.userTempalte;
         for (const [key, value] of Object.entries(variables)) {
             formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
         }

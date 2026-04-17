@@ -5,9 +5,16 @@ export interface Event {
     type: string;
 }
 
-export interface EngineGroupEvent extends Event {
+export interface GroupEvent extends Event {
     groupId: string;
 }
+
+export interface ReportGroupEvent extends GroupEvent {
+    type: "REPORT";
+    message: string;
+}
+
+export interface EngineGroupEvent extends GroupEvent { }
 
 export interface UnitKilledEvent extends EngineGroupEvent {
     type: "UNIT_KILLED";
@@ -42,7 +49,7 @@ export interface SignalEvent extends EngineGroupEvent {
     signal: Signal;
 }
 
-export interface TacticalGroupEvent extends Event {
+export interface TacticalGroupEvent extends GroupEvent {
     groupId: string;
 }
 
@@ -63,6 +70,11 @@ export interface CombatEndedEvent extends TacticalGroupEvent {
 
 export interface KIA extends TacticalGroupEvent {
     type: "KIA";
+}
+
+export interface TacticalReportEvent extends TacticalGroupEvent {
+    type: "TACTICAL_REPORT";
+    message: string;
 }
 
 export interface Signal {
@@ -428,6 +440,8 @@ export class Report extends Task {
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         console.log(`[REPORT] ${group.getName()}: ${this.message}`);
+        const event: ReportGroupEvent = { groupId: group.id, message: this.message, type: "REPORT" };
+        group.emitDomainEvent(event);
     }
 }
 
@@ -512,7 +526,7 @@ export class WaitTask extends Task {
     }
 }
 
-export type GroupEventListener = (event: EngineGroupEvent) => void;
+export type GroupEventListener = (event: GroupEvent) => void;
 
 export type SignalListener = (signal: Signal) => void;
 
@@ -598,7 +612,7 @@ export class Group {
         } as SignalEvent);
     }
 
-    public emitDomainEvent(event: EngineGroupEvent) {
+    public emitDomainEvent(event: GroupEvent) {
         for (const listener of this.listeners) {
             listener(event);
         }
