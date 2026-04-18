@@ -1,7 +1,7 @@
 import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, EngineGroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle } from "./army";
 import { GameExecutor } from "./army";
 import { Point, Point3D } from "./geography";
-import { sendArmaRequest } from "./index";
+import { sendArmaRequest } from "./server";
 import { v4 as uuidv4 } from 'uuid';
 
 export type NetId = string;
@@ -301,12 +301,13 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
             }
 
             const tempUnit = new Unit(id, name, { weapons: { primary: { base: null, sight: null, ammo: { type: "", quantity: 0 }, description: null }, secondary: { base: null, sight: null, ammo: { type: "", quantity: 0 }, description: null } } });
-            const loadout = {
-                weapons: {
-                    primary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
-                    secondary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
-                }
-            };//await this.getUnitLoadout(tempUnit); @TODO uncomment it
+            // const loadout = {
+            //     weapons: {
+            //         primary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
+            //         secondary: { ammo: { type: "cool ammo", quantity: 30 }, base: "base", description: "cool weapon", sight: "cool sight" },
+            //     }
+            // };
+            const loadout = await this.getUnitLoadout(tempUnit);
             units.push(new Unit(id, name, loadout, []));
         }
         return units;

@@ -113,14 +113,15 @@ export class GameMap {
             fs.mkdirSync(areaDir, { recursive: true });
         }
 
-        const scriptPath = process.env.AREA_SCRIPT_PATH;
+        const scriptDir = process.env.AREA_SCRIPT_DIR;
+        const scriptName = process.env.AREA_SCRIPT_NAME;
         const { x: x1, y: y1 } = leftBottomCorner;
         const { x: x2, y: y2 } = rightTopCorner;
 
         // Helper to build the command string
         const buildCmd = (fileName: string, extraArgs: string = "") => {
             const outPath = path.join(areaDir, `${fileName}.png`);
-            return `${pythonExecutable} ${scriptPath} extract ${x1} ${y1} ${x2} ${y2} --out ${outPath} ${extraArgs}`;
+            return `cd ${scriptDir} && ${pythonExecutable} ${scriptName} extract ${x1} ${y1} ${x2} ${y2} --out ${outPath} ${extraArgs}`;
         };
 
         // Define the 4 specific generation tasks

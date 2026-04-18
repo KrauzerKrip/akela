@@ -47,7 +47,7 @@ export class IntelAgent {
 
         this.agent = new LlmAgent({
             name: "intel_agnet",
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-3-flash-preview",
             description: "Analyzes intelligence observations and images.",
             instruction: systemPrompt,
         });
@@ -94,6 +94,8 @@ export class IntelAgent {
         });
 
         for await (const event of eventStream) {
+            console.log("DEBUG EVENT:", JSON.stringify(event, null, 2));
+
             if (isFinalResponse(event)) {
                 if (event.content && event.content.parts && event.content.parts.length > 0) {
                     finalResponseText = event.content.parts[0].text || "";

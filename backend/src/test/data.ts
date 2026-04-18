@@ -3,9 +3,14 @@ import { ArmyComposer } from "../army";
 import { serializeArmy } from "./serialization";
 import * as fs from "fs";
 import * as path from "path";
+import * as dotenv from 'dotenv'
+import { startServer } from "../server";
+
+dotenv.config()
 
 async function run() {
     const armaConnector = new ArmaConnector();
+    const app = startServer(armaConnector, 3000);
     const armyComposer = new ArmyComposer(armaConnector, armaConnector);
 
     console.log("Connecting to Arma and fetching BLUFOR army...");

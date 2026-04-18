@@ -7,27 +7,13 @@ import { deserializeArmy } from "./serialization";
 import { ArmyCombatMonitor, GroupCombatMonitor } from "../combat";
 import { createSitrep } from "../sitrep";
 import { SimpleExecutionPromptFormatter, SimpleIntelPromptFormatter, SimplePlanPromptFormatter, YamlSitrepFormatter } from "../format";
-import { BaseSessionService, Session as AdkSession } from "@google/adk";
+import { DatabaseSessionService, Session as AdkSession } from "@google/adk";
 import { PlanVisualization, PlanVisualizer } from "../plan/visualization";
 import { PlanSandbox } from "../plan/sandbox";
 import { Army } from "../army";
 import { Session } from "../session";
 
-class MockSessionService {
-    async createSession(options: any): Promise<AdkSession> {
-        return {
-            id: `test-session-${Date.now()}`,
-            userId: options.userId || "test",
-            events: []
-        } as any;
-    }
-    // minimal stubs for interface compliance if needed by ADK internally
-    async getSession() { return null as any; }
-    async updateSession() { return null as any; }
-    async addEvent() { return null as any; }
-    async getEvents() { return []; }
-    async getStore() { return null as any; }
-}
+
 
 async function main() {
     const args = process.argv.slice(2);
@@ -139,7 +125,13 @@ async function main() {
             areaDir
         );
 
-        const mockSessionService = new MockSessionService();
+        const dbUrl = process.env.SESSION_DB_URL;
+        if (!dbUrl) {
+            console.error("SESSION_DB_URL environment variable is required.");
+            process.exit(1);
+        }
+        const sessionService = new DatabaseSessionService(dbUrl);
+        await sessionService.init();
 
         // Create output directory if it doesn't exist
         const outDir = path.dirname(outputFile);
@@ -172,7 +164,7 @@ async function main() {
 
             const observations = Array.isArray(inputData.observations) ? inputData.observations : [];
 
-            const agent = new IntelAgent(new SimpleIntelPromptFormatter(), mockSessionService as any);
+            const agent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService);
             console.log("Running IntelAgent with", images.length, "images and", observations.length, "observations.");
             const result = await agent.analyze({ images, observations }, gameMapArea);
 
@@ -194,7 +186,7 @@ async function main() {
 
             const agent = new PlanAgent(
                 new SimplePlanPromptFormatter(new YamlSitrepFormatter()),
-                mockSessionService as any,
+                sessionService,
                 sandbox,
                 visualizer
             );
@@ -219,7 +211,7 @@ async function main() {
             const agent = new ExecutionAgent(
                 new SimpleExecutionPromptFormatter(new YamlSitrepFormatter()),
                 new YamlSitrepFormatter(),
-                mockSessionService as any,
+                sessionService,
                 sandbox
             );
 
