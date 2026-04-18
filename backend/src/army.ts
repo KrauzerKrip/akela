@@ -640,6 +640,7 @@ export class Group {
     }
 
     public addWaypointInEnd(waypoint: Waypoint) {
+        this.waypointById[waypoint.id] = waypoint;
         this.waypointList.insertInEnd(waypoint);
     }
 
