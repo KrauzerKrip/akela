@@ -285,7 +285,6 @@ export class ExecutionAgent {
     private sessionService: BaseSessionService;
     private planSandbox: PlanSandbox;
     private sitrepFormatter: SitrepFormatter;
-    private sessionService: BaseSessionService;
 
     constructor(promptFormatter: ExecutionPromptFormatter, sitrepFormatter: SitrepFormatter, sessionService: BaseSessionService, planSandbox: PlanSandbox) {
         this.promptFormatter = promptFormatter;
@@ -344,32 +343,11 @@ export class ExecutionAgent {
 
         const userMessage = this.promptFormatter.formatUserPlanPrompt(getSitreps(), planning.description, planning.code);
 
-        let finalResponseText = "Agent did not produce a final response.";
-
-        const runPrompt = async (prompt: string) => {
-            const eventStream = runner.runAsync({
-                sessionId: session.id,
-                userId: session.userId,
-                newMessage: {
-                    role: "user",
-                    parts: [{ text: prompt }]
-                }
-            });
-
-            for await (const event of eventStream) {
-                if (isFinalResponse(event)) {
-                    if (event.content && event.content.parts && event.content.parts.length > 0) {
-                        finalResponseText = event.content.parts[0].text || "";
-                    } else if (event.actions && (event.actions as any).escalate) {
-                        finalResponseText = `Agent escalated: ${(event as any).errorMessage || "No specific message."}`;
-                    }
-                    break;
-                }
-            }
-        };
-
-        await runPrompt(userMessage);
-
+        const finalResponseText = await this.runPrompt(runner, session, userMessage);
+        yield {
+            type: "AGENT_RESPONSE",
+            response: finalResponseText
+        } as AgentResponseEvent;
         if (executionCode) {
             const plan = await this.planSandbox.makePlan(army, executionCode);
             yield {
@@ -406,7 +384,7 @@ export class ExecutionAgent {
             }
 
             const prompt = this.promptFormatter.formatUserReportPrompt(getSitreps(), nextReport.message);
-            await runPrompt(prompt);
+            const finalResponseText = await this.runPrompt(runner, session, prompt);
 
             yield {
                 type: "AGENT_RESPONSE",
@@ -425,6 +403,30 @@ export class ExecutionAgent {
         }
     }
 
+    private async runPrompt(runner: Runner, session: Session, prompt: string): Promise<string> {
+        let finalResponseText = "Agent did not produce a final response.";
+        const eventStream = runner.runAsync({
+            sessionId: session.id,
+            userId: session.userId,
+            newMessage: {
+                role: "user",
+                parts: [{ text: prompt }]
+            }
+        });
+
+        for await (const event of eventStream) {
+            if (isFinalResponse(event)) {
+                if (event.content && event.content.parts && event.content.parts.length > 0) {
+                    finalResponseText = event.content.parts[0].text || "";
+                } else if (event.actions && (event.actions as any).escalate) {
+                    finalResponseText = `Agent escalated: ${(event as any).errorMessage || "No specific message."}`;
+                }
+                break;
+            }
+        }
+
+        return finalResponseText;
+    };
 
 }
 
