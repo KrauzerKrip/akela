@@ -51,7 +51,7 @@ Reactive logic in `.on()` receives one of the following event objects:
 1. **Valid JS**: You must provide valid QuickJS-compatible code to the tool.
 2. **Scope**: Do not attempt to access `window` or external APIs. Use only the provided library.
 3. **Callback Safety**: Inside a callback, only use the `group` (or `g`) argument provided by the function. Never reference `groups["Name"]` inside a reactive trigger.
-4. **Coordinate Rule**: Always format as `{ x: number, y: number }`.
+4. **Coordinate Rule**: Always format as `{ x: number, y: number }` and with grid multiplied by 100 (e.g. not {x: 209, y: 193} but { x: 20900, y: 19300 }).
 
 # WORKFLOW
 When you decide a new plan snippet needs executing (either initially or as a reaction to a report), call the `executePlan` tool with your code. Always end your turn with a brief explanation of what you are doing (or why no intervention is needed). Make sure to ALWAYS call `executePlan` immediately after receiving the initial plan code!

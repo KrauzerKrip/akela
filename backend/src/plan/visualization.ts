@@ -36,6 +36,7 @@ export class PlanVisualizer {
     public async visualize(gameMapArea: GameMapArea, plan: Plan, groupPositions: Map<string, Point>): Promise<PlanVisualization> {
         const exportDir = await this.makeOutline(gameMapArea, plan, groupPositions);
         const id = path.basename(exportDir);
+        console.log(`Visualized plan and exported to ${exportDir}`);
         return new PlanVisualization(id, exportDir);
     }
 

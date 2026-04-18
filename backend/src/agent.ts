@@ -11,6 +11,7 @@ import { PlanSandbox } from './plan/sandbox';
 import { Army, TacticalReportEvent } from './army';
 import { Plan } from './plan/models';
 import { ArmyCombatMonitor } from './combat';
+import * as util from 'util';
 
 export class Image {
     private readonly path: string;
@@ -94,7 +95,7 @@ export class IntelAgent {
         });
 
         for await (const event of eventStream) {
-            console.log("DEBUG EVENT:", JSON.stringify(event, null, 2));
+            console.log("DEBUG EVENT:", JSON.stringify(event, (k, v) => (k === 'data' && typeof v === 'string' && v.length > 200) ? '<base64 image removed>' : v, 2));
 
             if (isFinalResponse(event)) {
                 if (event.content && event.content.parts && event.content.parts.length > 0) {
@@ -143,13 +144,21 @@ export class PlanAgent {
                 code: z.string().describe("The JS code of the plan."),
             }),
             execute: async ({ code }) => {
-                const plan = await this.planSandbox.makePlan(army, code);
-                const viz = await this.planVisualizer.visualize(gameMapArea, plan, groupPositions);
+                try {
+                    const plan = await this.planSandbox.makePlan(army, code);
+                    const viz = await this.planVisualizer.visualize(gameMapArea, plan, groupPositions);
 
-                return {
-                    primitives_path: viz.getImagePath('primitives'),
-                    satellite_path: viz.getImagePath('satellite')
-                };
+                    return {
+                        primitives_path: viz.getImagePath('primitives'),
+                        satellite_path: viz.getImagePath('satellite')
+                    };
+                } catch (e: any) {
+                    return {
+                        error: e.message || String(e),
+                        name: e.name,
+                        stack: e.stack
+                    };
+                }
             },
         });
 
@@ -160,8 +169,17 @@ export class PlanAgent {
                 code: z.string().describe("The final confirmed JS code of the plan."),
             }),
             execute: async ({ code }) => {
-                finalPlanCode = code;
-                return { success: true };
+                try {
+                    await this.planSandbox.makePlan(army, code);
+                    finalPlanCode = code;
+                    return { success: true };
+                } catch (e: any) {
+                    return {
+                        error: e.message || String(e),
+                        name: e.name,
+                        stack: e.stack
+                    };
+                }
             },
         });
 
@@ -169,23 +187,26 @@ export class PlanAgent {
 
         const agent = new LlmAgent({
             name: "plan_agent",
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-3-flash-preview",
             description: "Plans operations.",
             instruction: systemPrompt,
             tools: [visualizePlan, commitToPlan],
             beforeModelCallback: async ({ request }) => {
+                console.log(`\n--- [Callback Start: ${new Date().toISOString()}] ---`);
+
                 for (const content of request.contents || []) {
                     if (!content.parts) continue;
                     const modifiedParts: any[] = [];
+
                     for (const part of content.parts) {
                         modifiedParts.push(part);
 
                         if (part.functionResponse && part.functionResponse.name === 'visualize_plan') {
                             const response = part.functionResponse.response as any;
+
                             if (response.primitives_path) {
-                                modifiedParts.push({
-                                    text: `[Tool Response Artifact] Visualized map with primitives:`
-                                });
+                                console.log(`[Injecting Image] Primitives: ${response.primitives_path}`);
+                                modifiedParts.push({ text: `[Tool Response Artifact] Visualized map with primitives:` });
                                 modifiedParts.push({
                                     inlineData: {
                                         mimeType: 'image/png',
@@ -193,10 +214,10 @@ export class PlanAgent {
                                     }
                                 });
                             }
+
                             if (response.satellite_path) {
-                                modifiedParts.push({
-                                    text: `[Tool Response Artifact] Visualized map with satellite layer:`
-                                });
+                                console.log(`[Injecting Image] Satellite: ${response.satellite_path}`);
+                                modifiedParts.push({ text: `[Tool Response Artifact] Visualized map with satellite layer:` });
                                 modifiedParts.push({
                                     inlineData: {
                                         mimeType: 'image/png',
@@ -204,10 +225,24 @@ export class PlanAgent {
                                     }
                                 });
                             }
+
+                            if (response.error) {
+                                console.log(`[Injecting Error] sandbox error: ${response.error}`);
+                                modifiedParts.push({ text: `[Tool Response Artifact] Tool execution failed! The sandbox encountered an error while evaluating your code:\n${response.error}\n${response.stack || ''}` });
+                            }
                         }
                     }
                     content.parts = modifiedParts;
+
+                    // DETAILED LOGGING OF PARTS
+                    console.log("MODIFIED PARTS STRUCTURE:");
+                    content.parts.forEach((part, index) => {
+                        const summary = summarizePart(part);
+                        console.log(`  Part [${index}]: ${util.inspect(summary, { colors: true, depth: 3 })}`);
+                    });
                 }
+
+                console.log(`--- [Callback End] ---\n`);
                 return undefined;
             }
         });
@@ -251,6 +286,8 @@ export class PlanAgent {
         });
 
         for await (const event of eventStream) {
+            console.log("DEBUG EVENT:", JSON.stringify(event, (k, v) => (k === 'data' && typeof v === 'string' && v.length > 200) ? '<base64 image removed>' : v, 2));
+
             if (isFinalResponse(event)) {
                 if (event.content && event.content.parts && event.content.parts.length > 0) {
                     finalResponseText = event.content.parts[0].text || "";
@@ -312,8 +349,18 @@ export class ExecutionAgent {
                 code: z.string().describe("The JS code of the plan."),
             }),
             execute: async ({ code }) => {
-                executionCode = code;
-                return { success: true };
+                try {
+                    // Try parsing code in sandbox to catch errors early
+                    await this.planSandbox.makePlan(army, code);
+                    executionCode = code;
+                    return { success: true };
+                } catch (e: any) {
+                    return {
+                        error: e.message || String(e),
+                        name: e.name,
+                        stack: e.stack
+                    };
+                }
             },
         });
 
@@ -499,4 +546,27 @@ export class SitrepReducingCompactor implements BaseContextCompactor {
             }
         }
     }
+}
+
+function summarizePart(part: any) {
+    if (part.text) return { type: 'text', content: part.text.substring(0, 50) + (part.text.length > 50 ? '...' : '') };
+    if (part.functionCall) return { type: 'functionCall', name: part.functionCall.name };
+    if (part.functionResponse) {
+        const hasError = part.functionResponse.response && !!part.functionResponse.response.error;
+        return {
+            type: 'functionResponse',
+            name: part.functionResponse.name,
+            status: hasError ? 'error' : 'complete',
+            error: hasError ? part.functionResponse.response.error : undefined
+        };
+    }
+    if (part.inlineData) {
+        return {
+            type: 'inlineData',
+            mimeType: part.inlineData.mimeType,
+            data_size: `${(part.inlineData.data.length / 1024).toFixed(2)} KB`,
+            preview: part.inlineData.data.substring(0, 20) + "..."
+        };
+    }
+    return { type: 'unknown', keys: Object.keys(part) };
 }

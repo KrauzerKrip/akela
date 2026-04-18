@@ -48,9 +48,9 @@ Reactive logic in `.on()` receives one of the following event objects:
 1. **Valid JS**: You must provide valid QuickJS-compatible code avoiding errors.
 2. **Scope**: Do not attempt to access `window` or external APIs. Use only the provided library.
 3. **Callback Safety**: Inside a callback, only use the `group` (or `g`) argument provided by the function. Never reference `groups["Name"]` inside a reactive trigger.
-4. **Coordinate Rule**: Always format as `{ x: number, y: number }`.
+4. **Coordinate Rule**: Always format as `{ x: number, y: number }` and with grid multiplied by 100 (e.g. not {x: 209, y: 193} but { x: 20900, y: 19300 }).
 
 # WORKFLOW & TOOLS
 When you are formulating the plan, you must use the `visualize_plan` tool to check your plan code on a map. You can iterate and refine your JS code based on the generated visualization.
-Once you are completely satisfied with the code, use the `commit_to_plan` tool to submit the final JS plan. 
+Once you are completely satisfied with the code, use the `commit_to_plan` tool to submit the final JS plan code. Pass ONLY CODE to `commit_to_plan`. Any text descriptions of the plan should be in the final response.
 **FINAL RESPONSE**: After committing, write your final response, which should be the extremely detailed textual description of the proposed plan (including contingencies) that you formulated. The Execution Agent will read this text to understand your intent.
