@@ -83,7 +83,7 @@ export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
 
     constructor() {
         this.systemPromptTemplate = readFileSync(join(__dirname, "prompts", "intel_system_prompt.md"), "utf-8");
-        this.userPromptTemplate = readFileSync(join(__dirname, "prompts", "intel_user_prompt.d"), "utf-8");
+        this.userPromptTemplate = readFileSync(join(__dirname, "prompts", "intel_user_prompt.md"), "utf-8");
     }
 
     public formatSystemPrompt(): string {
@@ -114,12 +114,14 @@ export interface ExecutionPromptFormatter {
 export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter {
     private sitrepFormatter: SitrepFormatter;
     private systemTemplate: string;
-    private userTempalte: string;
+    private userPlanTemplate: string;
+    private userReportTemplate: string;
 
     constructor(sitrepFormatter: SitrepFormatter) {
         this.sitrepFormatter = sitrepFormatter;
         this.systemTemplate = readFileSync(join(__dirname, "prompts", "execution_system_prompt.md"), "utf-8");
-        this.userTempalte = readFileSync(join(__dirname, "prompts", "execution_user_prompt.md"), "utf-8");
+        this.userPlanTemplate = readFileSync(join(__dirname, "prompts", "execution_user_plan_prompt.md"), "utf-8");
+        this.userReportTemplate = readFileSync(join(__dirname, "prompts", "execution_user_report_prompt.md"), "utf-8");
     }
 
     public formatSystemPrompt(): string {
@@ -135,7 +137,7 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
             "PLAN_CODE": planCode
         };
 
-        let formatted = this.userTempalte;
+        let formatted = this.userPlanTemplate;
         for (const [key, value] of Object.entries(variables)) {
             formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
         }
@@ -151,7 +153,7 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
             "REPORT": report
         };
 
-        let formatted = this.userTempalte;
+        let formatted = this.userReportTemplate;
         for (const [key, value] of Object.entries(variables)) {
             formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
         }

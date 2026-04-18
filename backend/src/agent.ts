@@ -58,7 +58,7 @@ export class IntelAgent {
         });
     }
 
-    public async analyze(intel: Intel, maps: Maps): Promise<string> {
+    public async analyze(intel: Intel, gameMapArea: GameMapArea): Promise<string> {
         const userPrompt = this.formatter.formatUserPrompt(intel.observations);
 
         const session = await this.sessionService.createSession({
@@ -75,6 +75,12 @@ export class IntelAgent {
                 }
             });
         }
+        parts.push({
+            inlineData: {
+                mimeType: 'image/jpeg',
+                data: gameMapArea.getBase64Image('frame_satellite')
+            }
+        });
 
         let finalResponseText = "Agent did not produce a final response.";
 
