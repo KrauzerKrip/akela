@@ -6,6 +6,10 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Task, Army } from "../army";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 export type VisualizedPlanLayerType = 'primitives' | 'satellite';
 
@@ -296,13 +300,39 @@ class Outline {
         const primCtx = primCanvas.getContext('2d');
         primCtx.drawImage(primImage, 0, 0);
         primCtx.drawImage(outlineImage, 0, 0);
-        fs.writeFileSync(path.join(exportDir, 'primitives_outline.png'), primCanvas.toBuffer('image/png'));
+        const primPath = path.join(exportDir, 'primitives_outline.png');
+        fs.writeFileSync(primPath, primCanvas.toBuffer('image/png'));
 
         // Draw onto satellite copy
         const satCanvas = createCanvas(res.width, res.height);
         const satCtx = satCanvas.getContext('2d');
         satCtx.drawImage(satImage, 0, 0);
         satCtx.drawImage(outlineImage, 0, 0);
-        fs.writeFileSync(path.join(exportDir, 'satellite_outline.png'), satCanvas.toBuffer('image/png'));
+        const satPath = path.join(exportDir, 'satellite_outline.png');
+        fs.writeFileSync(satPath, satCanvas.toBuffer('image/png'));
+
+        const pythonExecutable = process.env.PYTHON_EXEC;
+        if (!pythonExecutable) {
+            throw new Error("Environment variable PYTHON_EXEC must be defined");
+        }
+
+        const scriptDir = process.env.AREA_SCRIPT_DIR;
+        const scriptName = process.env.AREA_SCRIPT_NAME;
+        const { x: x1, y: y1 } = this.gameMapArea.leftBottomCorner;
+        const { x: x2, y: y2 } = this.gameMapArea.rightTopCorner;
+
+        const buildCmd = (imagePath: string) => {
+            return `cd "${scriptDir}" && ${pythonExecutable} ${scriptName} frame "${imagePath}" ${x1} ${y1} ${x2} ${y2} --out "${imagePath}" --frame --grid`;
+        };
+
+        try {
+            await Promise.all([
+                execAsync(buildCmd(primPath)),
+                execAsync(buildCmd(satPath))
+            ]);
+        } catch (error) {
+            console.error("Error adding frame to map visualization:", error);
+            throw error;
+        }
     }
 }
