@@ -73,7 +73,7 @@ async function test() {
     const code = fs.readFileSync(path.join(__dirname, "example_visualize.js"), 'utf-8');
 
     console.log("Compiling plan...");
-    const plan = sandbox.makePlan(army, code);
+    const plan = await sandbox.makePlan(army, code);
 
     console.log("Visualizing plan...");
     const visualizer = new PlanVisualizer(session);

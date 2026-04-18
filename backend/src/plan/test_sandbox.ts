@@ -93,7 +93,7 @@ async function test() {
     const code = fs.readFileSync(path.join(import.meta.dir, "example.js"), 'utf-8');
 
     console.log("Making plan...");
-    const plan = sandbox.makePlan(army, code);
+    const plan = await sandbox.makePlan(army, code);
     const groups = army.getGroups();
 
     // We store the promises but do NOT await them immediately if they are 

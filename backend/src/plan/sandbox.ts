@@ -9,10 +9,12 @@ import { Point } from "../geography";
 import { translateTask, translateToPlanGroup } from "./translation";
 
 export class PlanSandbox {
+    private quickJS: any;
     private arena: Arena;
     private taskReactions = new Map<string, Record<string, any>>();
 
-    private constructor(arena: Arena) {
+    private constructor(quickJS: any, arena: Arena) {
+        this.quickJS = quickJS;
         this.arena = arena;
     }
 
@@ -29,11 +31,23 @@ export class PlanSandbox {
         const bootstrapCode = fs.readFileSync(path.join(import.meta.dir, 'bootstrap.js'), 'utf8');
         arena.evalCode(bootstrapCode);
 
-        return new PlanSandbox(arena);
+        return new PlanSandbox(QuickJS, arena);
     }
 
+    public async reset() {
+        if (this.arena) {
+            this.arena.dispose();
+        }
+        const vm = this.quickJS.newContext();
+        this.arena = new Arena(vm, { isMarshalable: true });
+        this.arena.evalCode(`globalThis.global = globalThis;`);
+        const bootstrapCode = fs.readFileSync(path.join(import.meta.dir, 'bootstrap.js'), 'utf8');
+        this.arena.evalCode(bootstrapCode);
+        this.taskReactions.clear();
+    }
 
-    public makePlan(army: Army, code: string): Plan {
+    public async makePlan(army: Army, code: string): Promise<Plan> {
+        await this.reset();
         console.log(`[Sandbox] Making plan for army...`);
 
         let plan: Plan = {
