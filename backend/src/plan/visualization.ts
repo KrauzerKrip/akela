@@ -191,7 +191,7 @@ class Outline {
         this.ctx.moveTo(p1.x, p1.y);
         this.ctx.lineTo(p2.x, p2.y);
         this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = 5;
+        this.ctx.lineWidth = 10;
         this.ctx.stroke();
 
         // draw arrowhead
@@ -219,7 +219,7 @@ class Outline {
         this.ctx.moveTo(p1.x, p1.y);
         this.ctx.lineTo(p2.x, p2.y);
         this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = 6;
+        this.ctx.lineWidth = 12;
         this.ctx.stroke();
 
         // draw arrowhead
@@ -233,8 +233,8 @@ class Outline {
         this.ctx.stroke();
 
         // cross above its end
-        const crossOffset = 25; // distance from end
-        const crossRadius = 20;
+        const crossOffset = 30; // distance from end
+        const crossRadius = 25;
         const cx = p2.x + crossOffset * Math.cos(angle);
         const cy = p2.y + crossOffset * Math.sin(angle);
 
@@ -244,7 +244,7 @@ class Outline {
         this.ctx.moveTo(cx + crossRadius, cy - crossRadius);
         this.ctx.lineTo(cx - crossRadius, cy + crossRadius);
         this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = 4;
+        this.ctx.lineWidth = 6;
         this.ctx.stroke();
     }
 
