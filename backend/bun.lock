@@ -8,11 +8,12 @@
         "@google/adk": "^0.6.0",
         "@google/genai": "^1.47.0",
         "@napi-rs/canvas": "^0.1.97",
-        "elysia": "latest",
+        "elysia": "1.4.28",
         "image-size": "^2.0.2",
         "quickjs-emscripten": "^0.32.0",
         "quickjs-emscripten-sync": "1.8.0",
         "uuid": "^13.0.0",
+        "yaml": "^2.8.3",
       },
       "devDependencies": {
         "@google/adk-devtools": "^0.6.0",

@@ -39,4 +39,9 @@ export class Session {
             fs.mkdirSync(targetPath, { recursive: true });
         });
     }
+
+    public saveManifest(data: any): void {
+        const manifestPath = path.join(this.dir, "manifest.json");
+        fs.writeFileSync(manifestPath, JSON.stringify(data, null, 2));
+    }
 }
