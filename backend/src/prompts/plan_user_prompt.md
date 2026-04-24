@@ -1,7 +1,7 @@
 # INTELLIGENCE REPORT
 {{INTEL_BLOCK}}
 
-# SITREP
+# SITREP (your side)
 {{SITREP_BLOCK}}
 
 Review the intelligence and the current group statuses. Use the `visualize_plan` tool to draft your JS actions, test them, and verify they look correct on the map. 

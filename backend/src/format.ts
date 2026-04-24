@@ -9,7 +9,7 @@ export interface SitrepFormatter {
 
 export class YamlSitrepFormatter implements SitrepFormatter {
     private formatGrid(p: Point): string {
-        const formatCoord = (c: number) => Math.floor(c / 100).toString().padStart(3, '0');
+        const formatCoord = (c: number) => (c / 100).toFixed(2).padStart(6, '0');
         return `${formatCoord(p.x)}-${formatCoord(p.y)}`;
     }
 
@@ -56,7 +56,7 @@ export class YamlSitrepFormatter implements SitrepFormatter {
                 lines.push(`    Destination: "${this.formatGrid(sitrep.task.destination)}"`);
             }
             if (sitrep.task.behaviour) {
-                lines.push(`    Stance: "${sitrep.task.behaviour}"`);
+                lines.push(`    Behaviour: "${sitrep.task.behaviour}"`);
             }
         }
 
