@@ -334,7 +334,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         return {
             weapons: {
                 primary: parseWeapon(data[0] || []),
-                secondary: parseWeapon(data[2] || [])
+                secondary: parseWeapon(data[1] || [])
             }
         };
     }
