@@ -14,6 +14,10 @@ export class Session {
         this.dir = path.join(baseDir, this.id);
     }
 
+    public getId(): string {
+        return this.id;
+    }
+
     public getDirectory(): string {
         return this.dir;
     }

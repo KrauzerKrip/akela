@@ -8,7 +8,11 @@
   "dependencies": {
     "@google/adk": "^0.6.0",
     "@google/genai": "^1.47.0",
+    "@langfuse/otel": "^5.2.0",
+    "@langfuse/tracing": "^5.2.0",
     "@napi-rs/canvas": "^0.1.97",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-node": "^0.215.0",
     "elysia": "1.4.28",
     "image-size": "^2.0.2",
     "quickjs-emscripten": "^0.32.0",
