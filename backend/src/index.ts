@@ -92,7 +92,9 @@ const manifest: any = {
 session.saveManifest(manifest);
 
 const groups = army.getGroups();
-await Promise.all(groups.map(g => g.updateSituationalData()));
+for (const g of groups) {
+    await g.updateSituationalData();
+}
 
 // Subscriptions for JSONL logging
 armyCombatMonitor.subscribe(event => {
@@ -105,9 +107,14 @@ groups.forEach(g => {
     });
 });
 
+let isTicking = false;
 const stateTickInterval = setInterval(async () => {
+    if (isTicking) return;
+    isTicking = true;
     try {
-        await Promise.all(groups.map(g => g.updateSituationalData()));
+        for (const g of groups) {
+            await g.updateSituationalData();
+        }
 
         let allKnownEnemies: any[] = [];
         groups.forEach(g => {
@@ -131,6 +138,8 @@ const stateTickInterval = setInterval(async () => {
         session.appendEventLog(stateSnapshot);
     } catch (e) {
         console.error("Failed to execute state tick:", e);
+    } finally {
+        isTicking = false;
     }
 }, 1000); // Ticking every 1 second
 
