@@ -94,6 +94,46 @@ session.saveManifest(manifest);
 const groups = army.getGroups();
 await Promise.all(groups.map(g => g.updateSituationalData()));
 
+// Subscriptions for JSONL logging
+armyCombatMonitor.subscribe(event => {
+    session.appendEventLog(event);
+});
+
+groups.forEach(g => {
+    g.subscribe(event => {
+        session.appendEventLog(event);
+    });
+});
+
+const stateTickInterval = setInterval(async () => {
+    try {
+        await Promise.all(groups.map(g => g.updateSituationalData()));
+
+        let allKnownEnemies: any[] = [];
+        groups.forEach(g => {
+            const monitor = armyCombatMonitor.getGroupMonitor(g.id);
+            if (monitor) {
+                allKnownEnemies = allKnownEnemies.concat(monitor.getKnownEnemies());
+            }
+        });
+
+        const stateSnapshot = {
+            type: "STATE_TICK",
+            groups: groups.map(g => ({
+                id: g.id,
+                groupId: g.id,
+                name: g.getName(),
+                position: g.getPosition(),
+                task: g.getCurrentTask()?.type,
+            })),
+            knownEnemies: allKnownEnemies
+        };
+        session.appendEventLog(stateSnapshot);
+    } catch (e) {
+        console.error("Failed to execute state tick:", e);
+    }
+}, 1000); // Ticking every 1 second
+
 const gameMap = new GameMap(session);
 console.log(`Extracting map area from (${x1}, ${y1}) to (${x2}, ${y2})`);
 const gameMapArea = await gameMap.extractArea(
@@ -192,8 +232,10 @@ await propagateAttributes({
 });
 console.log("Shutting down tracing gracefully...");
 await sdk.shutdown();
+clearInterval(stateTickInterval);
 process.on("SIGINT", async () => {
     console.log("Shutting down tracing...");
     await sdk.shutdown();
+    clearInterval(stateTickInterval);
     process.exit(0);
 });

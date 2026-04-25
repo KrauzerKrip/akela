@@ -44,6 +44,24 @@ export interface TaskCompleteEvent extends EngineGroupEvent {
     taskId: string;
 }
 
+// Fired when a task is pushed to the queue.
+export interface OrderQueuedEvent extends EngineGroupEvent {
+    type: "ORDER_QUEUED";
+    task: Task;
+}
+
+// Fired when a task actually starts executing (either from queue or immediately).
+export interface TaskStartedEvent extends EngineGroupEvent {
+    type: "TASK_STARTED";
+    task: Task;
+}
+
+// Fired when a task has finished executing.
+export interface TaskCompletedEvent extends EngineGroupEvent {
+    type: "TASK_COMPLETED";
+    task: Task;
+}
+
 export interface SignalEvent extends EngineGroupEvent {
     type: "SIGNAL",
     signal: Signal;
@@ -645,6 +663,7 @@ export class Group {
     }
 
     public addTaskToQueue(task: Task) {
+        this.emitDomainEvent({ type: "ORDER_QUEUED", groupId: this.id, task: task } as OrderQueuedEvent);
         this.taskQueue.push(task);
         if (!this.activeTask) {
             this.executeNext();
@@ -660,8 +679,10 @@ export class Group {
 
     public async executeImmediately(task: Task) {
         this.activeTask = task;
+        this.emitDomainEvent({ type: "TASK_STARTED", groupId: this.id, task: task } as TaskStartedEvent);
         await task.execute(this, this.executor);
 
+        this.emitDomainEvent({ type: "TASK_COMPLETED", groupId: this.id, task: task } as TaskCompletedEvent);
         const signal = task.getCompletionSignal();
         if (signal) {
             this.emitSignal(signal);
@@ -721,8 +742,11 @@ export class Group {
 
         this.activeTask = this.taskQueue.shift() || null;
         if (this.activeTask) {
+            this.emitDomainEvent({ type: "TASK_STARTED", groupId: this.id, task: this.activeTask } as TaskStartedEvent);
             // This will now naturally wait for the task to finish itself
             await this.activeTask.execute(this, this.executor);
+            this.emitDomainEvent({ type: "TASK_COMPLETED", groupId: this.id, task: this.activeTask } as TaskCompletedEvent);
+
             const signal = this.activeTask.getCompletionSignal()
             if (signal) {
                 this.emitSignal(signal);

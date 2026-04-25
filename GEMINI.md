@@ -24,7 +24,7 @@ Akela is an LLM-powered agentic system that integrates directly with the Arma 3 
    - Spawns python sub-processors (`python/area.py`) to scrape exact topological image layers directly from Arma's datasets representing frames, grids, and satellite terrain for multimodal LLM vision.
 
 ## What a model should know to work with this code
-1. **Command Line runner**: Use `bun` to run the backend. **DO NOT USE `bun run tsc`**. Run files natively with `bun run <file>`. (e.g. `bun run src/index.ts --params params.json`) or bun build
+1. **Command Line runner**: Use `bun` to run the backend. **DO NOT USE `bun run tsc`**. Run files natively with `bun run <file>`. (e.g. `bun run src/index.ts --params params.json`) or bun build. Before using bun active flake so bun registers in the shell.
 2. **Arma 3 SQF scripting**: If instructed to modify `.sqf` script files, consult the partial Arma 3 documentation explicitly located at `/@AkelaMod/python/arma_docs.md`.
 3. **Session Output Storage**: All runtime events are logged and mapped to isolated directories generated in `.data/sessions/<id>`. This includes a `manifest.json` detailing the `Plan` events, user inputs, and intel summaries.
 4. **Agent Tools & Sandbox**: LLM tools are strictly typed leveraging `zod` for argument definitions and run within custom asynchronous contexts. Tactical group interactions are deeply rooted within Domain Events in `Group` objects, resolving JS promises hooked accurately through listeners (`ArmyCombatMonitor`).

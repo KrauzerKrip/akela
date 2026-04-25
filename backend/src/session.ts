@@ -48,4 +48,13 @@ export class Session {
         const manifestPath = path.join(this.dir, "manifest.json");
         fs.writeFileSync(manifestPath, JSON.stringify(data, null, 2));
     }
+
+    public appendEventLog(event: any): void {
+        const logPath = path.join(this.dir, "events.jsonl");
+        const logEntry = {
+            t: Date.now(),
+            ...event
+        };
+        fs.appendFileSync(logPath, JSON.stringify(logEntry) + "\n");
+    }
 }

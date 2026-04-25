@@ -16,6 +16,7 @@ import { Plan } from './plan/models';
 import { ArmyCombatMonitor } from './combat';
 import { Session } from './session';
 import * as util from 'util';
+import { v4 as uuidv4 } from 'uuid';
 
 export class Image {
     private readonly path: string;
@@ -543,7 +544,14 @@ export class ExecutionAgent {
             userId: process.env.SESSION_USER_ID || "akela_user",
         });
 
-        const finalResponseText = await this.runPrompt(runner, session, userMessage, promptObj);
+        const decisionId = uuidv4();
+        this.session.appendEventLog({
+            type: "LLM_DECISION_START",
+            decisionId: decisionId,
+            trigger: "Initial Execution"
+        });
+
+        const finalResponseText = await this.runPrompt(runner, session, userMessage, promptObj, decisionId);
         yield {
             type: "AGENT_RESPONSE",
             response: finalResponseText
@@ -584,7 +592,14 @@ export class ExecutionAgent {
             }
 
             const { system: _ignoredSys, user: userPrompt, prompt: promptObj } = await this.promptFormatter.formatReportPrompt(getSitreps(), nextReport.message);
-            const finalResponseText = await this.runPrompt(runner, session, userPrompt, promptObj);
+
+            const decisionId = uuidv4();
+            this.session.appendEventLog({
+                type: "LLM_DECISION_START",
+                decisionId: decisionId,
+                trigger: nextReport.message
+            });
+            const finalResponseText = await this.runPrompt(runner, session, userPrompt, promptObj, decisionId);
 
             yield {
                 type: "AGENT_RESPONSE",
@@ -603,11 +618,16 @@ export class ExecutionAgent {
         }
     }
 
-    private async runPrompt(runner: Runner, session: ADKSession, prompt: string, promptObj: any): Promise<string> {
+    private async runPrompt(runner: Runner, session: ADKSession, prompt: string, promptObj: any, decisionId?: string): Promise<string> {
         return startActiveObservation("ExecutionAgentPrompt", async (span) => {
             span.update({ input: { prompt } });
 
-            return await propagateAttributes({ sessionId: this.session.getId() }, async () => {
+            const attributes: any = { sessionId: this.session.getId() };
+            if (decisionId) {
+                attributes.tags = [`decision_id:${decisionId}`];
+            }
+
+            return await propagateAttributes(attributes, async () => {
                 let finalResponseText = "Agent did not produce a final response.";
                 const generation = startObservation(
                     "ExecutionAgent-LLM",
