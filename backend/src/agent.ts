@@ -216,7 +216,21 @@ export class PlanAgent {
                                     primitives_path: viz.getImagePath('primitives'),
                                     satellite_path: viz.getImagePath('satellite')
                                 };
-                                toolSpan.update({ output: res });
+                                toolSpan.update({
+                                    output: {
+                                        ...res,
+                                        primitives_image: new LangfuseMedia({
+                                            source: "bytes",
+                                            contentBytes: fs.readFileSync(res.primitives_path),
+                                            contentType: "image/png"
+                                        }),
+                                        satellite_image: new LangfuseMedia({
+                                            source: "bytes",
+                                            contentBytes: fs.readFileSync(res.satellite_path),
+                                            contentType: "image/png"
+                                        })
+                                    }
+                                });
                                 return res;
                             } catch (e: any) {
                                 const err = {
