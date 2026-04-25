@@ -527,7 +527,7 @@ export class ExecutionAgent {
 
         const agent = new LlmAgent({
             name: "execution_agnet",
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-3-flash-preview",
             description: "Executes the operation.",
             instruction: systemPrompt,
             contextCompactors: [new SitrepReducingCompactor({ recentEventsToKeep: 2, preserveLeadingEvents: 1 })],
@@ -632,7 +632,7 @@ export class ExecutionAgent {
                 const generation = startObservation(
                     "ExecutionAgent-LLM",
                     {
-                        model: "gemini-3.1-pro-preview",
+                        model: "gemini-3-flash-preview",
                         input: { prompt }
                     },
                     { asType: "generation" }

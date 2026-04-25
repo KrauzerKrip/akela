@@ -131,7 +131,7 @@ const stateTickInterval = setInterval(async () => {
                 groupId: g.id,
                 name: g.getName(),
                 position: g.getPosition(),
-                task: g.getCurrentTask()?.type,
+                task: g.getCurrentTask(),
             })),
             knownEnemies: allKnownEnemies
         };
@@ -216,9 +216,61 @@ try {
             sandbox
         );
 
+        manifest.executionEvents = manifest.executionEvents || [];
+
+        // Connect events to Sandbox
+        armyCombatMonitor.subscribe(async (event: any) => {
+            const group = army.getGroupById(event.groupId);
+            if (group) {
+                let planEvent: any = null;
+                if (event.type === "ENEMY_CONTACT") {
+                    planEvent = {
+                        type: "ENEMY_CONTACT",
+                        count: event.contactCount,
+                        kind: event.kind
+                    };
+                } else if (event.type === "KIA" || event.type === "ENGAGED_IN_COMBAT" || event.type === "COMBAT_ENDED") {
+                    planEvent = { type: event.type };
+                }
+
+                if (planEvent) {
+                    const newPlan = sandbox.handlePlanEvent(group, planEvent);
+                    if (newPlan) {
+                        try {
+                            const safePlan = { ...newPlan };
+                            manifest.executionEvents.push({ type: "NEW_PLAN", plan: safePlan });
+                            session.saveManifest(manifest);
+                        } catch (e) {
+                            console.log("Failed to save event to manifest:", e);
+                        }
+                        await actAccordingToPlan(newPlan, army);
+                    }
+                }
+            }
+        });
+
+        army.getGroups().forEach(g => {
+            g.subscribe(async (event: any) => {
+                if (event.type === "TASK_COMPLETED") {
+                    const taskName = event.task.name;
+                    const planEvent = { type: "TASK_COMPLETE", taskName };
+                    const newPlan = sandbox.handlePlanEvent(g, planEvent);
+                    if (newPlan) {
+                        try {
+                            const safePlan = { ...newPlan };
+                            manifest.executionEvents.push({ type: "NEW_PLAN", plan: safePlan });
+                            session.saveManifest(manifest);
+                        } catch (e) {
+                            console.log("Failed to save event to manifest:", e);
+                        }
+                        await actAccordingToPlan(newPlan, army);
+                    }
+                }
+            });
+        });
+
         console.log("Running ExecutionAgent... (streaming events)");
         const executionGenerator = executionAgent.execute(army, armyCombatMonitor, planningResult);
-        manifest.executionEvents = [];
 
         for await (const event of { [Symbol.asyncIterator]() { return executionGenerator; } }) {
             console.log("Execution Event generated:", event.type);

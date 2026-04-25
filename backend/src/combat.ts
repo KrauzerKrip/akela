@@ -1,5 +1,5 @@
 import { t } from "elysia";
-import { Army, CombatEndedEvent, CombatModeChangedEvent, EnemyContactEvent, EnemyDetectedEvent, EngagedInCombatEvent, EngineGroupEvent, Group, GroupEvent, TacticalGroupEvent, TacticalReportEvent, Task } from "./army";
+import { Army, CombatEndedEvent, CombatModeChangedEvent, EnemyContactEvent, EnemyDetectedEvent, EngagedInCombatEvent, EngineGroupEvent, Group, GroupEvent, TacticalGroupEvent, TacticalReportEvent, Task, KIA, UnitKilledEvent } from "./army";
 import { Point3D } from "./geography";
 
 export type TacticalEventListener = (event: TacticalGroupEvent) => void;
@@ -124,6 +124,12 @@ export class GroupCombatMonitor {
                     message: (event as TacticalReportEvent).message
                 }
                 this.emitTacticalEvent(newEvent);
+                break;
+            case "UNIT_KILLED":
+                this.emitTacticalEvent({
+                    groupId: event.groupId,
+                    type: "KIA"
+                } as KIA);
                 break;
         }
     }
