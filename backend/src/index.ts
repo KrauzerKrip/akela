@@ -108,7 +108,7 @@ await propagateAttributes({
     tags: ["initial"]
 }, async () => {
     // Intel
-    const intelAgent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService);
+    const intelAgent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService, session);
     console.log("Running IntelAgent...");
     const intelResult = await intelAgent.analyze(intel, gameMapArea);
     manifest.intelResult = intelResult;
@@ -126,6 +126,7 @@ await propagateAttributes({
     const planAgent = new PlanAgent(
         new SimplePlanPromptFormatter(new YamlSitrepFormatter()),
         sessionService,
+        session,
         sandbox,
         visualizer
     );
@@ -161,6 +162,7 @@ await propagateAttributes({
         new SimpleExecutionPromptFormatter(new YamlSitrepFormatter()),
         new YamlSitrepFormatter(),
         sessionService,
+        session,
         sandbox
     );
 

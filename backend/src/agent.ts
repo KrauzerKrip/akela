@@ -1,6 +1,6 @@
 import "./instrumentation";
-import { BaseContextCompactor, FunctionTool, InvocationContext, LlmAgent, Context, InMemoryRunner, BaseSessionService, Runner, isFinalResponse, Session, BaseSummarizer, Event, CompactedEvent, stringifyContent, createEvent } from '@google/adk';
-import { startActiveObservation, startObservation } from '@langfuse/tracing';
+import { BaseContextCompactor, FunctionTool, InvocationContext, LlmAgent, Context, InMemoryRunner, BaseSessionService, Runner, isFinalResponse, Session as ADKSession, BaseSummarizer, Event, CompactedEvent, stringifyContent, createEvent } from '@google/adk';
+import { startActiveObservation, startObservation, propagateAttributes } from '@langfuse/tracing';
 import { createUserContent } from '@google/genai';
 import { LangfuseMedia } from "@langfuse/core";
 import { int, z } from 'zod';
@@ -14,6 +14,7 @@ import { PlanSandbox } from './plan/sandbox';
 import { Army, TacticalReportEvent } from './army';
 import { Plan } from './plan/models';
 import { ArmyCombatMonitor } from './combat';
+import { Session } from './session';
 import * as util from 'util';
 
 export class Image {
@@ -41,11 +42,13 @@ export interface Maps {
 export class IntelAgent {
     private formatter: IntelPromptFormatter;
     private sessionService: BaseSessionService;
+    private session: Session;
     private model: string;
 
-    constructor(formatter: IntelPromptFormatter, sessionService: BaseSessionService) {
+    constructor(formatter: IntelPromptFormatter, sessionService: BaseSessionService, session: Session) {
         this.formatter = formatter;
         this.sessionService = sessionService;
+        this.session = session;
         this.model = "gemini-3-flash-preview";
     }
 
@@ -53,108 +56,113 @@ export class IntelAgent {
         return startActiveObservation("IntelAgent", async (span) => {
             const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(intel.observations);
 
-            const agent = new LlmAgent({
-                name: "intel_agnet",
-                model: this.model,
-                description: "Analyzes intelligence observations and images.",
-                instruction: systemPrompt,
-            });
-            const runner = new Runner({
-                agent: agent,
-                sessionService: this.sessionService,
-                appName: "intel-akela"
+            span.update({
+                input: { observations: intel.observations }
             });
 
-            const session = await this.sessionService.createSession({
-                appName: "intel-akela",
-                userId: process.env.SESSION_USER_ID || "akela_user",
-            });
+            return await propagateAttributes({ sessionId: this.session.getId() }, async () => {
+                const agent = new LlmAgent({
+                    name: "intel_agent",
+                    model: this.model,
+                    description: "Analyzes intelligence observations and images.",
+                    instruction: systemPrompt,
+                });
+                const runner = new Runner({
+                    agent: agent,
+                    sessionService: this.sessionService,
+                    appName: "intel-akela"
+                });
 
-            const parts: any[] = [{ text: userPrompt }];
-            for (const image of intel.images) {
+                const session = await this.sessionService.createSession({
+                    appName: "intel-akela",
+                    userId: process.env.SESSION_USER_ID || "akela_user",
+                });
+
+                const parts: any[] = [{ text: userPrompt }];
+                for (const image of intel.images) {
+                    parts.push({
+                        inlineData: {
+                            mimeType: 'image/jpeg',
+                            data: image.getBase64()
+                        }
+                    });
+                }
                 parts.push({
                     inlineData: {
                         mimeType: 'image/jpeg',
-                        data: image.getBase64()
+                        data: gameMapArea.getBase64Image('frame_satellite')
                     }
                 });
-            }
-            parts.push({
-                inlineData: {
-                    mimeType: 'image/jpeg',
-                    data: gameMapArea.getBase64Image('frame_satellite')
-                }
-            });
 
-            const wrappedImages = intel.images.map(img => new LangfuseMedia({
-                source: "bytes",
-                contentBytes: Buffer.from(img.getBase64(), 'base64'),
-                contentType: "image/jpeg"
-            }));
-            wrappedImages.push(new LangfuseMedia({
-                source: "bytes",
-                contentBytes: Buffer.from(gameMapArea.getBase64Image('frame_satellite'), 'base64'),
-                contentType: "image/jpeg"
-            }));
+                const wrappedImages = intel.images.map(img => new LangfuseMedia({
+                    source: "bytes",
+                    contentBytes: Buffer.from(img.getBase64(), 'base64'),
+                    contentType: "image/jpeg"
+                }));
+                wrappedImages.push(new LangfuseMedia({
+                    source: "bytes",
+                    contentBytes: Buffer.from(gameMapArea.getBase64Image('frame_satellite'), 'base64'),
+                    contentType: "image/jpeg"
+                }));
 
-            let finalResponseText = "Agent did not produce a final response.";
+                let finalResponseText = "Agent did not produce a final response.";
 
-            const generation = startObservation(
-                "IntelAgent-LLM",
-                {
-                    model: this.model,
-                    input: { observations: intel.observations, images: wrappedImages }
-                },
-                { asType: "generation" }
-            );
+                const generation = startObservation(
+                    "IntelAgent-LLM",
+                    {
+                        model: this.model,
+                        input: { observations: intel.observations, images: wrappedImages }
+                    },
+                    { asType: "generation" }
+                );
 
-            let sessionPromptTokens = 0;
-            let sessionCandidatesTokens = 0;
-            let sessionTotalTokens = 0;
+                let sessionPromptTokens = 0;
+                let sessionCandidatesTokens = 0;
+                let sessionTotalTokens = 0;
 
-            const eventStream = runner.runAsync({
-                sessionId: session.id,
-                userId: session.userId,
-                newMessage: {
-                    role: 'user',
-                    parts: parts
-                }
-            });
-
-            for await (const event of eventStream) {
-                if (event.usageMetadata) {
-                    sessionPromptTokens += event.usageMetadata.promptTokenCount || 0;
-                    sessionCandidatesTokens += event.usageMetadata.candidatesTokenCount || 0;
-                    sessionTotalTokens += event.usageMetadata.totalTokenCount || 0;
-                }
-                console.log("DEBUG EVENT:", JSON.stringify(event, (k, v) => (k === 'data' && typeof v === 'string' && v.length > 200) ? '<base64 image removed>' : v, 2));
-
-                if (isFinalResponse(event)) {
-                    if (event.content && event.content.parts && event.content.parts.length > 0) {
-                        finalResponseText = event.content.parts[0].text || "";
-                    } else if (event.actions && (event.actions as any).escalate) {
-                        finalResponseText = `Agent escalated: ${(event as any).errorMessage || 'No specific message.'}`;
+                const eventStream = runner.runAsync({
+                    sessionId: session.id,
+                    userId: session.userId,
+                    newMessage: {
+                        role: 'user',
+                        parts: parts
                     }
-                    break;
+                });
+
+                for await (const event of eventStream) {
+                    if (event.usageMetadata) {
+                        sessionPromptTokens += event.usageMetadata.promptTokenCount || 0;
+                        sessionCandidatesTokens += event.usageMetadata.candidatesTokenCount || 0;
+                        sessionTotalTokens += event.usageMetadata.totalTokenCount || 0;
+                    }
+                    console.log("DEBUG EVENT:", JSON.stringify(event, (k, v) => (k === 'data' && typeof v === 'string' && v.length > 200) ? '<base64 image removed>' : v, 2));
+
+                    if (isFinalResponse(event)) {
+                        if (event.content && event.content.parts && event.content.parts.length > 0) {
+                            finalResponseText = event.content.parts[0].text || "";
+                        } else if (event.actions && (event.actions as any).escalate) {
+                            finalResponseText = `Agent escalated: ${(event as any).errorMessage || 'No specific message.'}`;
+                        }
+                        break;
+                    }
                 }
-            }
 
-            generation.update({
-                prompt: promptObj,
-                usageDetails: {
-                    input: sessionPromptTokens,
-                    output: sessionCandidatesTokens,
-                    total: sessionTotalTokens
-                },
-                output: { content: finalResponseText }
-            });
-            generation.end();
+                generation.update({
+                    prompt: promptObj,
+                    usageDetails: {
+                        input: sessionPromptTokens,
+                        output: sessionCandidatesTokens,
+                        total: sessionTotalTokens
+                    },
+                    output: { content: finalResponseText }
+                });
+                generation.end();
 
-            span.update({
-                input: { observations: intel.observations },
-                output: { response: finalResponseText }
+                span.update({
+                    output: { response: finalResponseText }
+                });
+                return finalResponseText;
             });
-            return finalResponseText;
         });
     }
 }
@@ -167,251 +175,256 @@ export interface PlanningResult {
 export class PlanAgent {
     private formatter: PlanPromptFormatter;
     private sessionService: BaseSessionService;
+    private session: Session;
     private planVisualizer: PlanVisualizer;
     private planSandbox: PlanSandbox;
 
-    constructor(formatter: PlanPromptFormatter, sessionService: BaseSessionService, planSandbox: PlanSandbox, planVisualizer: PlanVisualizer) {
+    constructor(formatter: PlanPromptFormatter, sessionService: BaseSessionService, session: Session, planSandbox: PlanSandbox, planVisualizer: PlanVisualizer) {
         this.formatter = formatter;
         this.sessionService = sessionService;
+        this.session = session;
         this.planVisualizer = planVisualizer;
         this.planSandbox = planSandbox;
     }
 
     public async plan(army: Army, sitreps: Sitrep[], intelResult: string, gameMapArea: GameMapArea): Promise<PlanningResult> {
         return startActiveObservation("PlanAgent", async (span) => {
-            const groupPositions = new Map<string, Point>();
-            for (const sitrep of sitreps) {
-                groupPositions.set(sitrep.groupId, sitrep.position);
-            }
+            span.update({ input: { sitreps, intelResult } });
 
-            let finalPlanCode = "";
+            return await propagateAttributes({ sessionId: this.session.getId() }, async () => {
+                const groupPositions = new Map<string, Point>();
+                for (const sitrep of sitreps) {
+                    groupPositions.set(sitrep.groupId, sitrep.position);
+                }
 
-            const visualizePlan = new FunctionTool({
-                name: "visualize_plan",
-                description: "Draws the plan on a map for visual evaluation.",
-                parameters: z.object({
-                    code: z.string().describe("The JS code of the plan."),
-                }),
-                execute: async ({ code }) => {
-                    return startActiveObservation("visualize_plan", async (toolSpan) => {
-                        toolSpan.update({ input: { code } });
-                        try {
-                            const plan = await this.planSandbox.makePlan(army, code);
-                            const viz = await this.planVisualizer.visualize(gameMapArea, plan, groupPositions);
+                let finalPlanCode = "";
 
-                            const res = {
-                                primitives_path: viz.getImagePath('primitives'),
-                                satellite_path: viz.getImagePath('satellite')
-                            };
-                            toolSpan.update({ output: res });
-                            return res;
-                        } catch (e: any) {
-                            const err = {
-                                error: e.message || String(e),
-                                name: e.name,
-                                stack: e.stack
-                            };
-                            toolSpan.update({ output: err });
-                            return err;
-                        }
-                    }, { asType: "tool" });
-                },
-            });
+                const visualizePlan = new FunctionTool({
+                    name: "visualize_plan",
+                    description: "Draws the plan on a map for visual evaluation.",
+                    parameters: z.object({
+                        code: z.string().describe("The JS code of the plan."),
+                    }),
+                    execute: async ({ code }) => {
+                        return startActiveObservation("visualize_plan", async (toolSpan) => {
+                            toolSpan.update({ input: { code } });
+                            try {
+                                const plan = await this.planSandbox.makePlan(army, code);
+                                const viz = await this.planVisualizer.visualize(gameMapArea, plan, groupPositions);
 
-            const commitToPlan = new FunctionTool({
-                name: "commit_to_plan",
-                description: "Saves the plan code to be included in PlanningResult.",
-                parameters: z.object({
-                    code: z.string().describe("The final confirmed JS code of the plan."),
-                }),
-                execute: async ({ code }) => {
-                    return startActiveObservation("commit_to_plan", async (toolSpan) => {
-                        toolSpan.update({ input: { code } });
-                        try {
-                            await this.planSandbox.makePlan(army, code);
-                            finalPlanCode = code;
-                            toolSpan.update({ output: { success: true } });
-                            return { success: true };
-                        } catch (e: any) {
-                            const err = {
-                                error: e.message || String(e),
-                                name: e.name,
-                                stack: e.stack
-                            };
-                            toolSpan.update({ output: err });
-                            return err;
-                        }
-                    }, { asType: "tool" });
-                },
-            });
+                                const res = {
+                                    primitives_path: viz.getImagePath('primitives'),
+                                    satellite_path: viz.getImagePath('satellite')
+                                };
+                                toolSpan.update({ output: res });
+                                return res;
+                            } catch (e: any) {
+                                const err = {
+                                    error: e.message || String(e),
+                                    name: e.name,
+                                    stack: e.stack
+                                };
+                                toolSpan.update({ output: err });
+                                return err;
+                            }
+                        }, { asType: "tool" });
+                    },
+                });
 
-            const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(sitreps, intelResult);
+                const commitToPlan = new FunctionTool({
+                    name: "commit_to_plan",
+                    description: "Saves the plan code to be included in PlanningResult.",
+                    parameters: z.object({
+                        code: z.string().describe("The final confirmed JS code of the plan."),
+                    }),
+                    execute: async ({ code }) => {
+                        return startActiveObservation("commit_to_plan", async (toolSpan) => {
+                            toolSpan.update({ input: { code } });
+                            try {
+                                await this.planSandbox.makePlan(army, code);
+                                finalPlanCode = code;
+                                toolSpan.update({ output: { success: true } });
+                                return { success: true };
+                            } catch (e: any) {
+                                const err = {
+                                    error: e.message || String(e),
+                                    name: e.name,
+                                    stack: e.stack
+                                };
+                                toolSpan.update({ output: err });
+                                return err;
+                            }
+                        }, { asType: "tool" });
+                    },
+                });
 
-            const agent = new LlmAgent({
-                name: "plan_agent",
-                model: "gemini-3-flash-preview",
-                description: "Plans operations.",
-                instruction: systemPrompt,
-                tools: [visualizePlan, commitToPlan],
-                beforeModelCallback: async ({ request }) => {
-                    console.log(`\n--- [Callback Start: ${new Date().toISOString()}] ---`);
+                const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(sitreps, intelResult);
 
-                    for (const content of request.contents || []) {
-                        if (!content.parts) continue;
-                        const modifiedParts: any[] = [];
+                const agent = new LlmAgent({
+                    name: "plan_agent",
+                    model: "gemini-3-flash-preview",
+                    description: "Plans operations.",
+                    instruction: systemPrompt,
+                    tools: [visualizePlan, commitToPlan],
+                    beforeModelCallback: async ({ request }) => {
+                        console.log(`\n--- [Callback Start: ${new Date().toISOString()}] ---`);
 
-                        for (const part of content.parts) {
-                            modifiedParts.push(part);
+                        for (const content of request.contents || []) {
+                            if (!content.parts) continue;
+                            const modifiedParts: any[] = [];
 
-                            if (part.functionResponse && part.functionResponse.name === 'visualize_plan') {
-                                const response = part.functionResponse.response as any;
+                            for (const part of content.parts) {
+                                modifiedParts.push(part);
 
-                                if (response.primitives_path) {
-                                    console.log(`[Injecting Image] Primitives: ${response.primitives_path}`);
-                                    modifiedParts.push({ text: `[Tool Response Artifact] Visualized map with primitives:` });
-                                    modifiedParts.push({
-                                        inlineData: {
-                                            mimeType: 'image/png',
-                                            data: fs.readFileSync(response.primitives_path).toString('base64')
-                                        }
-                                    });
-                                }
+                                if (part.functionResponse && part.functionResponse.name === 'visualize_plan') {
+                                    const response = part.functionResponse.response as any;
 
-                                if (response.satellite_path) {
-                                    console.log(`[Injecting Image] Satellite: ${response.satellite_path}`);
-                                    modifiedParts.push({ text: `[Tool Response Artifact] Visualized map with satellite layer:` });
-                                    modifiedParts.push({
-                                        inlineData: {
-                                            mimeType: 'image/png',
-                                            data: fs.readFileSync(response.satellite_path).toString('base64')
-                                        }
-                                    });
-                                }
+                                    if (response.primitives_path) {
+                                        console.log(`[Injecting Image] Primitives: ${response.primitives_path}`);
+                                        modifiedParts.push({ text: `[Tool Response Artifact] Visualized map with primitives:` });
+                                        modifiedParts.push({
+                                            inlineData: {
+                                                mimeType: 'image/png',
+                                                data: fs.readFileSync(response.primitives_path).toString('base64')
+                                            }
+                                        });
+                                    }
 
-                                if (response.error) {
-                                    console.log(`[Injecting Error] sandbox error: ${response.error}`);
-                                    modifiedParts.push({ text: `[Tool Response Artifact] Tool execution failed! The sandbox encountered an error while evaluating your code:\n${response.error}\n${response.stack || ''}` });
+                                    if (response.satellite_path) {
+                                        console.log(`[Injecting Image] Satellite: ${response.satellite_path}`);
+                                        modifiedParts.push({ text: `[Tool Response Artifact] Visualized map with satellite layer:` });
+                                        modifiedParts.push({
+                                            inlineData: {
+                                                mimeType: 'image/png',
+                                                data: fs.readFileSync(response.satellite_path).toString('base64')
+                                            }
+                                        });
+                                    }
+
+                                    if (response.error) {
+                                        console.log(`[Injecting Error] sandbox error: ${response.error}`);
+                                        modifiedParts.push({ text: `[Tool Response Artifact] Tool execution failed! The sandbox encountered an error while evaluating your code:\n${response.error}\n${response.stack || ''}` });
+                                    }
                                 }
                             }
+                            content.parts = modifiedParts;
+
+                            // DETAILED LOGGING OF PARTS
+                            console.log("MODIFIED PARTS STRUCTURE:");
+                            content.parts.forEach((part, index) => {
+                                const summary = summarizePart(part);
+                                console.log(`  Part [${index}]: ${util.inspect(summary, { colors: true, depth: 3 })}`);
+                            });
                         }
-                        content.parts = modifiedParts;
 
-                        // DETAILED LOGGING OF PARTS
-                        console.log("MODIFIED PARTS STRUCTURE:");
-                        content.parts.forEach((part, index) => {
-                            const summary = summarizePart(part);
-                            console.log(`  Part [${index}]: ${util.inspect(summary, { colors: true, depth: 3 })}`);
-                        });
+                        console.log(`--- [Callback End] ---\n`);
+                        return undefined;
+                    }
+                });
+
+                const runner = new Runner({
+                    agent: agent,
+                    sessionService: this.sessionService,
+                    appName: "plan-akela"
+                });
+
+
+
+                const session = await this.sessionService.createSession({
+                    appName: "plan-akela",
+                    userId: process.env.SESSION_USER_ID || "akela_user",
+                });
+
+                const parts: any[] = [{ text: userPrompt }];
+                parts.push({
+                    inlineData: {
+                        mimeType: 'image/png',
+                        data: gameMapArea.getBase64Image('primitives')
+                    }
+                });
+                parts.push({
+                    inlineData: {
+                        mimeType: 'image/png',
+                        data: gameMapArea.getBase64Image('satellite')
+                    }
+                });
+
+                const wrappedImages = [
+                    new LangfuseMedia({
+                        source: "bytes",
+                        contentBytes: Buffer.from(gameMapArea.getBase64Image('primitives'), 'base64'),
+                        contentType: "image/png"
+                    }),
+                    new LangfuseMedia({
+                        source: "bytes",
+                        contentBytes: Buffer.from(gameMapArea.getBase64Image('satellite'), 'base64'),
+                        contentType: "image/png"
+                    })
+                ];
+
+                let finalResponseText = "Agent did not produce a final response.";
+
+                const generation = startObservation(
+                    "PlanAgent-LLM",
+                    {
+                        model: "gemini-3-flash-preview",
+                        input: { sitreps, intelResult, images: wrappedImages }
+                    },
+                    { asType: "generation" }
+                );
+
+                let sessionPromptTokens = 0;
+                let sessionCandidatesTokens = 0;
+                let sessionTotalTokens = 0;
+
+                const eventStream = runner.runAsync({
+                    sessionId: session.id,
+                    userId: session.userId,
+                    newMessage: {
+                        role: 'user',
+                        parts: parts
+                    }
+                });
+
+                for await (const event of eventStream) {
+                    if (event.usageMetadata) {
+                        sessionPromptTokens += event.usageMetadata.promptTokenCount || 0;
+                        sessionCandidatesTokens += event.usageMetadata.candidatesTokenCount || 0;
+                        sessionTotalTokens += event.usageMetadata.totalTokenCount || 0;
                     }
 
-                    console.log(`--- [Callback End] ---\n`);
-                    return undefined;
-                }
-            });
+                    console.log("DEBUG EVENT:", JSON.stringify(event, (k, v) => (k === 'data' && typeof v === 'string' && v.length > 200) ? '<base64 image removed>' : v, 2));
 
-            const runner = new Runner({
-                agent: agent,
-                sessionService: this.sessionService,
-                appName: "plan-akela"
-            });
-
-
-
-            const session = await this.sessionService.createSession({
-                appName: "plan-akela",
-                userId: process.env.SESSION_USER_ID || "akela_user",
-            });
-
-            const parts: any[] = [{ text: userPrompt }];
-            parts.push({
-                inlineData: {
-                    mimeType: 'image/png',
-                    data: gameMapArea.getBase64Image('primitives')
-                }
-            });
-            parts.push({
-                inlineData: {
-                    mimeType: 'image/png',
-                    data: gameMapArea.getBase64Image('satellite')
-                }
-            });
-
-            const wrappedImages = [
-                new LangfuseMedia({
-                    source: "bytes",
-                    contentBytes: Buffer.from(gameMapArea.getBase64Image('primitives'), 'base64'),
-                    contentType: "image/png"
-                }),
-                new LangfuseMedia({
-                    source: "bytes",
-                    contentBytes: Buffer.from(gameMapArea.getBase64Image('satellite'), 'base64'),
-                    contentType: "image/png"
-                })
-            ];
-
-            let finalResponseText = "Agent did not produce a final response.";
-
-            const generation = startObservation(
-                "PlanAgent-LLM",
-                {
-                    model: "gemini-3-flash-preview",
-                    input: { sitreps, intelResult, images: wrappedImages }
-                },
-                { asType: "generation" }
-            );
-
-            let sessionPromptTokens = 0;
-            let sessionCandidatesTokens = 0;
-            let sessionTotalTokens = 0;
-
-            const eventStream = runner.runAsync({
-                sessionId: session.id,
-                userId: session.userId,
-                newMessage: {
-                    role: 'user',
-                    parts: parts
-                }
-            });
-
-            for await (const event of eventStream) {
-                if (event.usageMetadata) {
-                    sessionPromptTokens += event.usageMetadata.promptTokenCount || 0;
-                    sessionCandidatesTokens += event.usageMetadata.candidatesTokenCount || 0;
-                    sessionTotalTokens += event.usageMetadata.totalTokenCount || 0;
-                }
-
-                console.log("DEBUG EVENT:", JSON.stringify(event, (k, v) => (k === 'data' && typeof v === 'string' && v.length > 200) ? '<base64 image removed>' : v, 2));
-
-                if (isFinalResponse(event)) {
-                    if (event.content && event.content.parts && event.content.parts.length > 0) {
-                        finalResponseText = event.content.parts[0].text || "";
-                    } else if (event.actions && (event.actions as any).escalate) {
-                        finalResponseText = `Agent escalated: ${(event as any).errorMessage || 'No specific message.'}`;
+                    if (isFinalResponse(event)) {
+                        if (event.content && event.content.parts && event.content.parts.length > 0) {
+                            finalResponseText = event.content.parts[0].text || "";
+                        } else if (event.actions && (event.actions as any).escalate) {
+                            finalResponseText = `Agent escalated: ${(event as any).errorMessage || 'No specific message.'}`;
+                        }
+                        break;
                     }
-                    break;
                 }
-            }
 
-            generation.update({
-                prompt: promptObj,
-                usageDetails: {
-                    input: sessionPromptTokens,
-                    output: sessionCandidatesTokens,
-                    total: sessionTotalTokens
-                },
-                output: { content: finalResponseText }
+                generation.update({
+                    prompt: promptObj,
+                    usageDetails: {
+                        input: sessionPromptTokens,
+                        output: sessionCandidatesTokens,
+                        total: sessionTotalTokens
+                    },
+                    output: { content: finalResponseText }
+                });
+                generation.end();
+
+                span.update({
+                    output: { code: finalPlanCode, description: finalResponseText }
+                });
+
+                return {
+                    code: finalPlanCode,
+                    description: finalResponseText
+                };
             });
-            generation.end();
-
-            span.update({
-                input: { sitreps, intelResult },
-                output: { code: finalPlanCode, description: finalResponseText }
-            });
-
-            return {
-                code: finalPlanCode,
-                description: finalResponseText
-            };
         });
     }
 }
@@ -439,15 +452,16 @@ export interface NewPlanEvent extends ExecutionEvent {
 export class ExecutionAgent {
     private promptFormatter: ExecutionPromptFormatter;
     private sessionService: BaseSessionService;
+    private session: Session;
     private planSandbox: PlanSandbox;
     private sitrepFormatter: SitrepFormatter;
 
-    constructor(promptFormatter: ExecutionPromptFormatter, sitrepFormatter: SitrepFormatter, sessionService: BaseSessionService, planSandbox: PlanSandbox) {
+    constructor(promptFormatter: ExecutionPromptFormatter, sitrepFormatter: SitrepFormatter, sessionService: BaseSessionService, session: Session, planSandbox: PlanSandbox) {
         this.promptFormatter = promptFormatter;
         this.sessionService = sessionService;
+        this.session = session;
         this.planSandbox = planSandbox;
         this.sitrepFormatter = sitrepFormatter;
-        this.sessionService = sessionService;
     }
 
     public async *execute(army: Army, armyCombatMonitor: ArmyCombatMonitor, planning: PlanningResult): AsyncGenerator<ExecutionEvent> {
@@ -575,64 +589,67 @@ export class ExecutionAgent {
         }
     }
 
-    private async runPrompt(runner: Runner, session: Session, prompt: string, promptObj: any): Promise<string> {
+    private async runPrompt(runner: Runner, session: ADKSession, prompt: string, promptObj: any): Promise<string> {
         return startActiveObservation("ExecutionAgentPrompt", async (span) => {
-            let finalResponseText = "Agent did not produce a final response.";
-            const generation = startObservation(
-                "ExecutionAgent-LLM",
-                {
-                    model: "gemini-3.1-pro-preview",
-                    input: { prompt }
-                },
-                { asType: "generation" }
-            );
+            span.update({ input: { prompt } });
 
-            let sessionPromptTokens = 0;
-            let sessionCandidatesTokens = 0;
-            let sessionTotalTokens = 0;
+            return await propagateAttributes({ sessionId: this.session.getId() }, async () => {
+                let finalResponseText = "Agent did not produce a final response.";
+                const generation = startObservation(
+                    "ExecutionAgent-LLM",
+                    {
+                        model: "gemini-3.1-pro-preview",
+                        input: { prompt }
+                    },
+                    { asType: "generation" }
+                );
 
-            const eventStream = runner.runAsync({
-                sessionId: session.id,
-                userId: session.userId,
-                newMessage: {
-                    role: "user",
-                    parts: [{ text: prompt }]
-                }
-            });
+                let sessionPromptTokens = 0;
+                let sessionCandidatesTokens = 0;
+                let sessionTotalTokens = 0;
 
-            for await (const event of eventStream) {
-                if (event.usageMetadata) {
-                    sessionPromptTokens += event.usageMetadata.promptTokenCount || 0;
-                    sessionCandidatesTokens += event.usageMetadata.candidatesTokenCount || 0;
-                    sessionTotalTokens += event.usageMetadata.totalTokenCount || 0;
-                }
-
-                if (isFinalResponse(event)) {
-                    if (event.content && event.content.parts && event.content.parts.length > 0) {
-                        finalResponseText = event.content.parts[0].text || "";
-                    } else if (event.actions && (event.actions as any).escalate) {
-                        finalResponseText = `Agent escalated: ${(event as any).errorMessage || "No specific message."}`;
+                const eventStream = runner.runAsync({
+                    sessionId: session.id,
+                    userId: session.userId,
+                    newMessage: {
+                        role: "user",
+                        parts: [{ text: prompt }]
                     }
-                    break;
+                });
+
+                for await (const event of eventStream) {
+                    if (event.usageMetadata) {
+                        sessionPromptTokens += event.usageMetadata.promptTokenCount || 0;
+                        sessionCandidatesTokens += event.usageMetadata.candidatesTokenCount || 0;
+                        sessionTotalTokens += event.usageMetadata.totalTokenCount || 0;
+                    }
+
+                    if (isFinalResponse(event)) {
+                        if (event.content && event.content.parts && event.content.parts.length > 0) {
+                            finalResponseText = event.content.parts[0].text || "";
+                        } else if (event.actions && (event.actions as any).escalate) {
+                            finalResponseText = `Agent escalated: ${(event as any).errorMessage || "No specific message."}`;
+                        }
+                        break;
+                    }
                 }
-            }
 
-            generation.update({
-                prompt: promptObj,
-                usageDetails: {
-                    input: sessionPromptTokens,
-                    output: sessionCandidatesTokens,
-                    total: sessionTotalTokens
-                },
-                output: { content: finalResponseText }
-            });
-            generation.end();
+                generation.update({
+                    prompt: promptObj,
+                    usageDetails: {
+                        input: sessionPromptTokens,
+                        output: sessionCandidatesTokens,
+                        total: sessionTotalTokens
+                    },
+                    output: { content: finalResponseText }
+                });
+                generation.end();
 
-            span.update({
-                input: { prompt },
-                output: { response: finalResponseText }
+                span.update({
+                    output: { response: finalResponseText }
+                });
+                return finalResponseText;
             });
-            return finalResponseText;
         });
     };
 

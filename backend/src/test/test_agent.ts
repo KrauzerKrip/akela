@@ -12,7 +12,7 @@ import { PlanVisualization, PlanVisualizer } from "../plan/visualization";
 import { PlanSandbox } from "../plan/sandbox";
 import { Army } from "../army";
 import { Session } from "../session";
-
+import { v4 as uuidv4 } from 'uuid';
 
 
 async function main() {
@@ -133,6 +133,14 @@ async function main() {
         const sessionService = new DatabaseSessionService(dbUrl);
         await sessionService.init();
 
+        const timestamp = new Date().toISOString().replace(/:/g, '-');
+        const session = {
+            getId: () => `test-${sessionConfig.id}-${timestamp}-${uuidv4()}`,
+            getDirectory: () => sessionDir,
+            getAreasDirectory: () => path.join(sessionDir, "areas"),
+            getPlanningDirectory: () => path.join(sessionDir, "planning")
+        } as Session;
+
         // Create output directory if it doesn't exist
         const outDir = path.dirname(outputFile);
         if (!fs.existsSync(outDir)) {
@@ -164,7 +172,7 @@ async function main() {
 
             const observations = Array.isArray(inputData.observations) ? inputData.observations : [];
 
-            const agent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService);
+            const agent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService, session);
             console.log("Running IntelAgent with", images.length, "images and", observations.length, "observations.");
             const result = await agent.analyze({ images, observations }, gameMapArea);
 
@@ -187,6 +195,7 @@ async function main() {
             const agent = new PlanAgent(
                 new SimplePlanPromptFormatter(new YamlSitrepFormatter()),
                 sessionService,
+                session,
                 sandbox,
                 visualizer
             );
@@ -212,6 +221,7 @@ async function main() {
                 new SimpleExecutionPromptFormatter(new YamlSitrepFormatter()),
                 new YamlSitrepFormatter(),
                 sessionService,
+                session,
                 sandbox
             );
 
