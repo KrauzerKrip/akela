@@ -23,8 +23,13 @@ Akela is an LLM-powered agentic system that integrates directly with the Arma 3 
    - Dynamically generates map bounding boxes derived from local area coordinates.
    - Spawns python sub-processors (`python/area.py`) to scrape exact topological image layers directly from Arma's datasets representing frames, grids, and satellite terrain for multimodal LLM vision.
 
+5. **Observability & Evaluation (`backend/src/instrumentation.ts`)**
+   - Integrates Langfuse for runtime tracing through OpenTelemetry and prompt management.
+   - Requires tracing initialization and graceful shutdown inside the `AgenticPipeline` to correctly export telemetry batches via `sdk.shutdown()`.
+
 ## What a model should know to work with this code
-1. **Command Line runner**: Use `bun` to run the backend. **DO NOT USE `bun run tsc`**. Run files natively with `bun run <file>`. (e.g. `bun run src/index.ts --params params.json`) or bun build. Before using bun active flake so bun registers in the shell.
-2. **Arma 3 SQF scripting**: If instructed to modify `.sqf` script files, consult the partial Arma 3 documentation explicitly located at `/@AkelaMod/python/arma_docs.md`.
-3. **Session Output Storage**: All runtime events are logged and mapped to isolated directories generated in `.data/sessions/<id>`. This includes a `manifest.json` detailing the `Plan` events, user inputs, and intel summaries.
-4. **Agent Tools & Sandbox**: LLM tools are strictly typed leveraging `zod` for argument definitions and run within custom asynchronous contexts. Tactical group interactions are deeply rooted within Domain Events in `Group` objects, resolving JS promises hooked accurately through listeners (`ArmyCombatMonitor`).
+1. **Environment Setup**: Define `SESSION_DB_URL` (for local @google/adk state) and Langfuse keys (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`) in `.env` for the telemetry to correctly boot up without failure.
+2. **Command Line runner**: Use `bun` to run the backend. **DO NOT USE `bun run tsc`**. Run files natively with `bun run <file>`. (e.g. `bun run src/index.ts --params params.json`) or bun build. Before using bun active flake so bun registers in the shell.
+3. **Arma 3 SQF scripting**: If instructed to modify `.sqf` script files, consult the partial Arma 3 documentation explicitly located at `/@AkelaMod/python/arma_docs.md`.
+4. **Session Output Storage**: All runtime events are logged and mapped to isolated directories generated in `.data/sessions/<id>`. This includes a `manifest.json` detailing the `Plan` events, user inputs, and intel summaries.
+5. **Agent Tools & Sandbox**: LLM tools are strictly typed leveraging `zod` for argument definitions and run within custom asynchronous contexts. Tactical group interactions are deeply rooted within Domain Events in `Group` objects, resolving JS promises hooked accurately through listeners (`ArmyCombatMonitor`).

@@ -129,8 +129,8 @@ describe("GroupCombatMonitor", () => {
         } as EnemyDetectedEvent);
 
         // Verify property exists via type bypass
-        const knownEnemiesMap = (monitor as any).knownEnemies as Map<string, boolean>;
-        expect(knownEnemiesMap.get("t1")).toBe(true);
+        const knownEnemiesMap = (monitor as any).knownEnemies as Map<string, any>;
+        expect(knownEnemiesMap.has("t1")).toBe(true);
 
         // Advance beyond batch window
         advanceTime(2500);

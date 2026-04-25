@@ -142,97 +142,103 @@ const gameMapArea = await gameMap.extractArea(
 );
 
 // Main Pipeline execution wrapped in Trace
-await propagateAttributes({
-    traceName: "AgenticPipeline",
-    sessionId: session.getId(),
-    tags: ["initial"]
-}, async () => {
-    // Intel
-    const intelAgent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService, session);
-    console.log("Running IntelAgent...");
-    const intelResult = await intelAgent.analyze(intel, gameMapArea);
-    manifest.intelResult = intelResult;
-    session.saveManifest(manifest);
-    console.log("Intel finished.");
+try {
+    await propagateAttributes({
+        traceName: "AgenticPipeline",
+        sessionId: session.getId(),
+        tags: ["initial"]
+    }, async () => {
+        // Intel
+        const intelAgent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService, session);
+        console.log("Running IntelAgent...");
+        const intelResult = await intelAgent.analyze(intel, gameMapArea);
+        manifest.intelResult = intelResult;
+        session.saveManifest(manifest);
+        console.log("Intel finished.");
 
-    // Plan
-    const sitreps = groups.map(g => {
-        const monitor = armyCombatMonitor.getGroupMonitor(g.id);
-        return createSitrep(g, monitor!);
+        // Plan
+        const sitreps = groups.map(g => {
+            const monitor = armyCombatMonitor.getGroupMonitor(g.id);
+            return createSitrep(g, monitor!);
+        });
+
+        const sandbox = await PlanSandbox.create();
+        const visualizer = new PlanVisualizer(session);
+        const planAgent = new PlanAgent(
+            new SimplePlanPromptFormatter(new YamlSitrepFormatter()),
+            sessionService,
+            session,
+            sandbox,
+            visualizer
+        );
+
+        console.log("Running PlanAgent...");
+        const planningResult = await planAgent.plan(army, sitreps, intelResult, gameMapArea);
+        manifest.planningResult = planningResult;
+        session.saveManifest(manifest);
+        console.log("Plan finished.");
+
+        // Execute
+        async function actAccordingToPlan(plan: Plan, army: Army) {
+            const groups = army.getGroups();
+            const immediateTaskPromises = [];
+            for (const group of groups) {
+                if (plan.queuedTasks && plan.queuedTasks[group.id]) {
+                    plan.queuedTasks[group.id].forEach((task) => {
+                        group.addTaskToQueue(task);
+                    });
+                }
+                if (plan.immediateTasks && plan.immediateTasks[group.id]) {
+                    immediateTaskPromises.push(group.executeImmediately(plan.immediateTasks[group.id]));
+                }
+
+                if (plan.clearGroupTasks && plan.clearGroupTasks[group.id]) {
+                    group.clearTasks();
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        const executionAgent = new ExecutionAgent(
+            new SimpleExecutionPromptFormatter(new YamlSitrepFormatter()),
+            new YamlSitrepFormatter(),
+            sessionService,
+            session,
+            sandbox
+        );
+
+        console.log("Running ExecutionAgent... (streaming events)");
+        const executionGenerator = executionAgent.execute(army, armyCombatMonitor, planningResult);
+        manifest.executionEvents = [];
+
+        for await (const event of { [Symbol.asyncIterator]() { return executionGenerator; } }) {
+            console.log("Execution Event generated:", event.type);
+            try {
+                const safeEvent = { ...event };
+                if (safeEvent.type === "NEW_PLAN") {
+                    delete (safeEvent as any).plan;
+                }
+                manifest.executionEvents.push(safeEvent);
+                session.saveManifest(manifest);
+            } catch (e) {
+                console.log("Failed to save event to manifest:", e);
+            }
+
+            if (event.type === "NEW_PLAN") {
+                const plan = (event as any).plan;
+                await actAccordingToPlan(plan, army);
+            }
+        }
+        console.log("Execution closed.");
     });
+} catch (error) {
+    console.error("Pipeline crashed with error:", error);
+} finally {
+    console.log("Shutting down tracing gracefully...");
+    await sdk.shutdown();
+    clearInterval(stateTickInterval);
+}
 
-    const sandbox = await PlanSandbox.create();
-    const visualizer = new PlanVisualizer(session);
-    const planAgent = new PlanAgent(
-        new SimplePlanPromptFormatter(new YamlSitrepFormatter()),
-        sessionService,
-        session,
-        sandbox,
-        visualizer
-    );
-
-    console.log("Running PlanAgent...");
-    const planningResult = await planAgent.plan(army, sitreps, intelResult, gameMapArea);
-    manifest.planningResult = planningResult;
-    session.saveManifest(manifest);
-    console.log("Plan finished.");
-
-    // Execute
-    async function actAccordingToPlan(plan: Plan, army: Army) {
-        const groups = army.getGroups();
-        const immediateTaskPromises = [];
-        for (const group of groups) {
-            if (plan.queuedTasks[group.id]) {
-                plan.queuedTasks[group.id].forEach((task) => {
-                    group.addTaskToQueue(task);
-                });
-            }
-            if (plan.immediateTasks[group.id]) {
-                immediateTaskPromises.push(group.executeImmediately(plan.immediateTasks[group.id]));
-            }
-
-            if (plan.clearGroupTasks[group.id]) {
-                group.clearTasks();
-            }
-        }
-        await new Promise(resolve => setTimeout(resolve, 0));
-    }
-
-    const executionAgent = new ExecutionAgent(
-        new SimpleExecutionPromptFormatter(new YamlSitrepFormatter()),
-        new YamlSitrepFormatter(),
-        sessionService,
-        session,
-        sandbox
-    );
-
-    console.log("Running ExecutionAgent... (streaming events)");
-    const executionGenerator = executionAgent.execute(army, armyCombatMonitor, planningResult);
-    manifest.executionEvents = [];
-
-    for await (const event of { [Symbol.asyncIterator]() { return executionGenerator; } }) {
-        console.log("Execution Event generated:", event.type);
-        try {
-            const safeEvent = { ...event };
-            if (safeEvent.type === "NEW_PLAN") {
-                delete (safeEvent as any).plan;
-            }
-            manifest.executionEvents.push(safeEvent);
-            session.saveManifest(manifest);
-        } catch (e) {
-            console.log("Failed to save event to manifest:", e);
-        }
-
-        if (event.type === "NEW_PLAN") {
-            const plan = (event as any).plan;
-            await actAccordingToPlan(plan, army);
-        }
-    }
-    console.log("Execution closed.");
-});
-console.log("Shutting down tracing gracefully...");
-await sdk.shutdown();
-clearInterval(stateTickInterval);
 process.on("SIGINT", async () => {
     console.log("Shutting down tracing...");
     await sdk.shutdown();
