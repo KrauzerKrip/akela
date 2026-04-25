@@ -188,6 +188,8 @@ await propagateAttributes({
     }
     console.log("Execution closed.");
 });
+console.log("Shutting down tracing gracefully...");
+await sdk.shutdown();
 process.on("SIGINT", async () => {
     console.log("Shutting down tracing...");
     await sdk.shutdown();

@@ -1,6 +1,8 @@
+import "./instrumentation";
 import { BaseContextCompactor, FunctionTool, InvocationContext, LlmAgent, Context, InMemoryRunner, BaseSessionService, Runner, isFinalResponse, Session, BaseSummarizer, Event, CompactedEvent, stringifyContent, createEvent } from '@google/adk';
 import { startActiveObservation, startObservation } from '@langfuse/tracing';
 import { createUserContent } from '@google/genai';
+import { LangfuseMedia } from "@langfuse/core";
 import { int, z } from 'zod';
 import * as fs from 'fs';
 import path from 'path';
@@ -39,30 +41,29 @@ export interface Maps {
 export class IntelAgent {
     private formatter: IntelPromptFormatter;
     private sessionService: BaseSessionService;
-    private agent: LlmAgent;
-    private runner: Runner;
+    private model: string;
 
     constructor(formatter: IntelPromptFormatter, sessionService: BaseSessionService) {
         this.formatter = formatter;
         this.sessionService = sessionService;
-        const systemPrompt = this.formatter.formatSystemPrompt();
-
-        this.agent = new LlmAgent({
-            name: "intel_agnet",
-            model: "gemini-3-flash-preview",
-            description: "Analyzes intelligence observations and images.",
-            instruction: systemPrompt,
-        });
-        this.runner = new Runner({
-            agent: this.agent,
-            sessionService: sessionService,
-            appName: "intel-akela"
-        });
+        this.model = "gemini-3-flash-preview";
     }
 
     public async analyze(intel: Intel, gameMapArea: GameMapArea): Promise<string> {
         return startActiveObservation("IntelAgent", async (span) => {
-            const userPrompt = this.formatter.formatUserPrompt(intel.observations);
+            const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(intel.observations);
+
+            const agent = new LlmAgent({
+                name: "intel_agnet",
+                model: this.model,
+                description: "Analyzes intelligence observations and images.",
+                instruction: systemPrompt,
+            });
+            const runner = new Runner({
+                agent: agent,
+                sessionService: this.sessionService,
+                appName: "intel-akela"
+            });
 
             const session = await this.sessionService.createSession({
                 appName: "intel-akela",
@@ -85,13 +86,24 @@ export class IntelAgent {
                 }
             });
 
+            const wrappedImages = intel.images.map(img => new LangfuseMedia({
+                source: "bytes",
+                contentBytes: Buffer.from(img.getBase64(), 'base64'),
+                contentType: "image/jpeg"
+            }));
+            wrappedImages.push(new LangfuseMedia({
+                source: "bytes",
+                contentBytes: Buffer.from(gameMapArea.getBase64Image('frame_satellite'), 'base64'),
+                contentType: "image/jpeg"
+            }));
+
             let finalResponseText = "Agent did not produce a final response.";
 
             const generation = startObservation(
                 "IntelAgent-LLM",
                 {
-                    model: "gemini-3-flash-preview",
-                    input: { observations: intel.observations }
+                    model: this.model,
+                    input: { observations: intel.observations, images: wrappedImages }
                 },
                 { asType: "generation" }
             );
@@ -100,7 +112,7 @@ export class IntelAgent {
             let sessionCandidatesTokens = 0;
             let sessionTotalTokens = 0;
 
-            const eventStream = this.runner.runAsync({
+            const eventStream = runner.runAsync({
                 sessionId: session.id,
                 userId: session.userId,
                 newMessage: {
@@ -128,6 +140,7 @@ export class IntelAgent {
             }
 
             generation.update({
+                prompt: promptObj,
                 usageDetails: {
                     input: sessionPromptTokens,
                     output: sessionCandidatesTokens,
@@ -180,21 +193,28 @@ export class PlanAgent {
                     code: z.string().describe("The JS code of the plan."),
                 }),
                 execute: async ({ code }) => {
-                    try {
-                        const plan = await this.planSandbox.makePlan(army, code);
-                        const viz = await this.planVisualizer.visualize(gameMapArea, plan, groupPositions);
+                    return startActiveObservation("visualize_plan", async (toolSpan) => {
+                        toolSpan.update({ input: { code } });
+                        try {
+                            const plan = await this.planSandbox.makePlan(army, code);
+                            const viz = await this.planVisualizer.visualize(gameMapArea, plan, groupPositions);
 
-                        return {
-                            primitives_path: viz.getImagePath('primitives'),
-                            satellite_path: viz.getImagePath('satellite')
-                        };
-                    } catch (e: any) {
-                        return {
-                            error: e.message || String(e),
-                            name: e.name,
-                            stack: e.stack
-                        };
-                    }
+                            const res = {
+                                primitives_path: viz.getImagePath('primitives'),
+                                satellite_path: viz.getImagePath('satellite')
+                            };
+                            toolSpan.update({ output: res });
+                            return res;
+                        } catch (e: any) {
+                            const err = {
+                                error: e.message || String(e),
+                                name: e.name,
+                                stack: e.stack
+                            };
+                            toolSpan.update({ output: err });
+                            return err;
+                        }
+                    }, { asType: "tool" });
                 },
             });
 
@@ -205,21 +225,27 @@ export class PlanAgent {
                     code: z.string().describe("The final confirmed JS code of the plan."),
                 }),
                 execute: async ({ code }) => {
-                    try {
-                        await this.planSandbox.makePlan(army, code);
-                        finalPlanCode = code;
-                        return { success: true };
-                    } catch (e: any) {
-                        return {
-                            error: e.message || String(e),
-                            name: e.name,
-                            stack: e.stack
-                        };
-                    }
+                    return startActiveObservation("commit_to_plan", async (toolSpan) => {
+                        toolSpan.update({ input: { code } });
+                        try {
+                            await this.planSandbox.makePlan(army, code);
+                            finalPlanCode = code;
+                            toolSpan.update({ output: { success: true } });
+                            return { success: true };
+                        } catch (e: any) {
+                            const err = {
+                                error: e.message || String(e),
+                                name: e.name,
+                                stack: e.stack
+                            };
+                            toolSpan.update({ output: err });
+                            return err;
+                        }
+                    }, { asType: "tool" });
                 },
             });
 
-            const systemPrompt = this.formatter.formatSystemPrompt();
+            const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(sitreps, intelResult);
 
             const agent = new LlmAgent({
                 name: "plan_agent",
@@ -289,7 +315,7 @@ export class PlanAgent {
                 appName: "plan-akela"
             });
 
-            const userPrompt = this.formatter.formatUserPrompt(sitreps, intelResult);
+
 
             const session = await this.sessionService.createSession({
                 appName: "plan-akela",
@@ -310,13 +336,26 @@ export class PlanAgent {
                 }
             });
 
+            const wrappedImages = [
+                new LangfuseMedia({
+                    source: "bytes",
+                    contentBytes: Buffer.from(gameMapArea.getBase64Image('primitives'), 'base64'),
+                    contentType: "image/png"
+                }),
+                new LangfuseMedia({
+                    source: "bytes",
+                    contentBytes: Buffer.from(gameMapArea.getBase64Image('satellite'), 'base64'),
+                    contentType: "image/png"
+                })
+            ];
+
             let finalResponseText = "Agent did not produce a final response.";
 
             const generation = startObservation(
                 "PlanAgent-LLM",
                 {
                     model: "gemini-3-flash-preview",
-                    input: { sitreps, intelResult }
+                    input: { sitreps, intelResult, images: wrappedImages }
                 },
                 { asType: "generation" }
             );
@@ -354,6 +393,7 @@ export class PlanAgent {
             }
 
             generation.update({
+                prompt: promptObj,
                 usageDetails: {
                     input: sessionPromptTokens,
                     output: sessionCandidatesTokens,
@@ -420,33 +460,25 @@ export class ExecutionAgent {
                 code: z.string().describe("The JS code of the plan."),
             }),
             execute: async ({ code }) => {
-                try {
-                    // Try parsing code in sandbox to catch errors early
-                    await this.planSandbox.makePlan(army, code);
-                    executionCode = code;
-                    return { success: true };
-                } catch (e: any) {
-                    return {
-                        error: e.message || String(e),
-                        name: e.name,
-                        stack: e.stack
-                    };
-                }
+                return startActiveObservation("executePlan", async (toolSpan) => {
+                    toolSpan.update({ input: { code } });
+                    try {
+                        // Try parsing code in sandbox to catch errors early
+                        await this.planSandbox.makePlan(army, code);
+                        executionCode = code;
+                        toolSpan.update({ output: { success: true } });
+                        return { success: true };
+                    } catch (e: any) {
+                        const err = {
+                            error: e.message || String(e),
+                            name: e.name,
+                            stack: e.stack
+                        };
+                        toolSpan.update({ output: err });
+                        return err;
+                    }
+                }, { asType: "tool" });
             },
-        });
-
-        const agent = new LlmAgent({
-            name: "execution_agnet",
-            model: "gemini-3.1-pro-preview",
-            description: "Executes the operation.",
-            instruction: this.promptFormatter.formatSystemPrompt(),
-            contextCompactors: [new SitrepReducingCompactor({ recentEventsToKeep: 2, preserveLeadingEvents: 1 })],
-            tools: [executePlan]
-        });
-        const runner = new Runner({
-            agent: agent,
-            sessionService: this.sessionService,
-            appName: "execution-akela"
         });
 
         const getSitreps = () => {
@@ -462,14 +494,28 @@ export class ExecutionAgent {
             return sitreps;
         };
 
+        const { system: systemPrompt, user: userMessage, prompt: promptObj } = await this.promptFormatter.formatPlanPrompt(getSitreps(), planning.description, planning.code);
+
+        const agent = new LlmAgent({
+            name: "execution_agnet",
+            model: "gemini-3.1-pro-preview",
+            description: "Executes the operation.",
+            instruction: systemPrompt,
+            contextCompactors: [new SitrepReducingCompactor({ recentEventsToKeep: 2, preserveLeadingEvents: 1 })],
+            tools: [executePlan]
+        });
+        const runner = new Runner({
+            agent: agent,
+            sessionService: this.sessionService,
+            appName: "execution-akela"
+        });
+
         const session = await this.sessionService.createSession({
             appName: "execution-akela",
             userId: process.env.SESSION_USER_ID || "akela_user",
         });
 
-        const userMessage = this.promptFormatter.formatUserPlanPrompt(getSitreps(), planning.description, planning.code);
-
-        const finalResponseText = await this.runPrompt(runner, session, userMessage);
+        const finalResponseText = await this.runPrompt(runner, session, userMessage, promptObj);
         yield {
             type: "AGENT_RESPONSE",
             response: finalResponseText
@@ -509,8 +555,8 @@ export class ExecutionAgent {
                 });
             }
 
-            const prompt = this.promptFormatter.formatUserReportPrompt(getSitreps(), nextReport.message);
-            const finalResponseText = await this.runPrompt(runner, session, prompt);
+            const { system: _ignoredSys, user: userPrompt, prompt: promptObj } = await this.promptFormatter.formatReportPrompt(getSitreps(), nextReport.message);
+            const finalResponseText = await this.runPrompt(runner, session, userPrompt, promptObj);
 
             yield {
                 type: "AGENT_RESPONSE",
@@ -529,7 +575,7 @@ export class ExecutionAgent {
         }
     }
 
-    private async runPrompt(runner: Runner, session: Session, prompt: string): Promise<string> {
+    private async runPrompt(runner: Runner, session: Session, prompt: string, promptObj: any): Promise<string> {
         return startActiveObservation("ExecutionAgentPrompt", async (span) => {
             let finalResponseText = "Agent did not produce a final response.";
             const generation = startObservation(
@@ -572,6 +618,7 @@ export class ExecutionAgent {
             }
 
             generation.update({
+                prompt: promptObj,
                 usageDetails: {
                     input: sessionPromptTokens,
                     output: sessionCandidatesTokens,

@@ -1,7 +1,6 @@
 import { Sitrep, GroupSitrepStatus } from "./sitrep";
 import { Point } from "./geography";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { LangfuseClient } from "@langfuse/client";
 
 export interface SitrepFormatter {
     format(sitrep: Sitrep): string;
@@ -70,65 +69,41 @@ export class YamlSitrepFormatter implements SitrepFormatter {
         return lines.join('\n');
     }
 }
-
-
 export interface IntelPromptFormatter {
-    formatSystemPrompt(): string;
-    formatUserPrompt(observations: string[]): string;
+    formatPrompt(observations: string[]): Promise<{ system: string; user: string; prompt: any }>;
 }
 
 export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
-    private systemPromptTemplate: string;
-    private userPromptTemplate: string;
+    private langfuse = new LangfuseClient();
 
-    constructor() {
-        this.systemPromptTemplate = readFileSync(join(__dirname, "prompts", "intel_system_prompt.md"), "utf-8");
-        this.userPromptTemplate = readFileSync(join(__dirname, "prompts", "intel_user_prompt.md"), "utf-8");
-    }
-
-    public formatSystemPrompt(): string {
-        return this.systemPromptTemplate;
-    }
-
-    public formatUserPrompt(observations: string[]): string {
+    public async formatPrompt(observations: string[]): Promise<{ system: string; user: string; prompt: any }> {
+        const prompt = await this.langfuse.prompt.get("intel_prompt", { label: "production", type: "chat" });
         const observationString = observations.join("\n");
         const variables: Record<string, string> = {
             "OBSERVATION_BLOCK": observationString,
-        }
-
-        let formatted = this.userPromptTemplate;
-        for (const [key, value] of Object.entries(variables)) {
-            formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
-        }
-
-        return formatted;
+        };
+        const compiled = prompt.compile(variables) as { role: string; content: string }[];
+        const system = compiled.find(m => m.role === "system")?.content || "";
+        const user = compiled.find(m => m.role === "user")?.content || "";
+        return { system, user, prompt };
     }
 }
 
 export interface ExecutionPromptFormatter {
-    formatSystemPrompt(): string;
-    formatUserPlanPrompt(sitreps: Sitrep[], planDescription: string, planCode: string): string;
-    formatUserReportPrompt(sitreps: Sitrep[], report: string): string;
+    formatPlanPrompt(sitreps: Sitrep[], planDescription: string, planCode: string): Promise<{ system: string; user: string; prompt: any }>;
+    formatReportPrompt(sitreps: Sitrep[], report: string): Promise<{ system: string; user: string; prompt: any }>;
 }
 
 export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter {
     private sitrepFormatter: SitrepFormatter;
-    private systemTemplate: string;
-    private userPlanTemplate: string;
-    private userReportTemplate: string;
+    private langfuse = new LangfuseClient();
 
     constructor(sitrepFormatter: SitrepFormatter) {
         this.sitrepFormatter = sitrepFormatter;
-        this.systemTemplate = readFileSync(join(__dirname, "prompts", "execution_system_prompt.md"), "utf-8");
-        this.userPlanTemplate = readFileSync(join(__dirname, "prompts", "execution_user_plan_prompt.md"), "utf-8");
-        this.userReportTemplate = readFileSync(join(__dirname, "prompts", "execution_user_report_prompt.md"), "utf-8");
     }
 
-    public formatSystemPrompt(): string {
-        return this.systemTemplate;
-    }
-
-    public formatUserPlanPrompt(sitreps: Sitrep[], planDescription: string, planCode: string): string {
+    public async formatPlanPrompt(sitreps: Sitrep[], planDescription: string, planCode: string): Promise<{ system: string; user: string; prompt: any }> {
+        const prompt = await this.langfuse.prompt.get("execution_plan_prompt", { label: "production", type: "chat" });
         const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
 
         const variables: Record<string, string> = {
@@ -137,15 +112,15 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
             "PLAN_CODE": planCode
         };
 
-        let formatted = this.userPlanTemplate;
-        for (const [key, value] of Object.entries(variables)) {
-            formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
-        }
+        const compiled = prompt.compile(variables) as { role: string; content: string }[];
+        const system = compiled.find(m => m.role === "system")?.content || "";
+        const user = compiled.find(m => m.role === "user")?.content || "";
 
-        return formatted;
+        return { system, user, prompt };
     }
 
-    public formatUserReportPrompt(sitreps: Sitrep[], report: string): string {
+    public async formatReportPrompt(sitreps: Sitrep[], report: string): Promise<{ system: string; user: string; prompt: any }> {
+        const prompt = await this.langfuse.prompt.get("execution_report_prompt", { label: "production", type: "chat" });
         const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
 
         const variables: Record<string, string> = {
@@ -153,36 +128,28 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
             "REPORT": report
         };
 
-        let formatted = this.userReportTemplate;
-        for (const [key, value] of Object.entries(variables)) {
-            formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
-        }
+        const compiled = prompt.compile(variables) as { role: string; content: string }[];
+        const system = compiled.find(m => m.role === "system")?.content || "";
+        const user = compiled.find(m => m.role === "user")?.content || "";
 
-        return formatted;
+        return { system, user, prompt };
     }
 }
 
 export interface PlanPromptFormatter {
-    formatSystemPrompt(): string;
-    formatUserPrompt(sitreps: Sitrep[], intel: string): string;
+    formatPrompt(sitreps: Sitrep[], intel: string): Promise<{ system: string; user: string; prompt: any }>;
 }
 
 export class SimplePlanPromptFormatter implements PlanPromptFormatter {
     private sitrepFormatter: SitrepFormatter;
-    private systemPromptTemplate: string;
-    private userPromptTemplate: string;
+    private langfuse = new LangfuseClient();
 
     constructor(sitrepFormatter: SitrepFormatter) {
         this.sitrepFormatter = sitrepFormatter;
-        this.systemPromptTemplate = readFileSync(join(__dirname, "prompts", "plan_system_prompt.md"), "utf-8");
-        this.userPromptTemplate = readFileSync(join(__dirname, "prompts", "plan_user_prompt.md"), "utf-8");
     }
 
-    public formatSystemPrompt(): string {
-        return this.systemPromptTemplate;
-    }
-
-    public formatUserPrompt(sitreps: Sitrep[], intel: string): string {
+    public async formatPrompt(sitreps: Sitrep[], intel: string): Promise<{ system: string; user: string; prompt: any }> {
+        const prompt = await this.langfuse.prompt.get("plan_prompt", { label: "production", type: "chat" });
         const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
 
         const variables: Record<string, string> = {
@@ -190,11 +157,10 @@ export class SimplePlanPromptFormatter implements PlanPromptFormatter {
             "INTEL_BLOCK": intel,
         };
 
-        let formatted = this.userPromptTemplate;
-        for (const [key, value] of Object.entries(variables)) {
-            formatted = formatted.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
-        }
+        const compiled = prompt.compile(variables) as { role: string; content: string }[];
+        const system = compiled.find(m => m.role === "system")?.content || "";
+        const user = compiled.find(m => m.role === "user")?.content || "";
 
-        return formatted;
+        return { system, user, prompt };
     }
 }

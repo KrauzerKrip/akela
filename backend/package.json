@@ -8,6 +8,7 @@
   "dependencies": {
     "@google/adk": "^0.6.0",
     "@google/genai": "^1.47.0",
+    "@langfuse/client": "^5.2.0",
     "@langfuse/otel": "^5.2.0",
     "@langfuse/tracing": "^5.2.0",
     "@napi-rs/canvas": "^0.1.97",
