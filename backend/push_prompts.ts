@@ -32,7 +32,17 @@ async function main() {
         }
     ];
 
-    for (const task of tasks) {
+    const args = process.argv.slice(2);
+    const tasksToRun = args.length > 0
+        ? tasks.filter(task => args.some(arg => task.name.includes(arg)))
+        : tasks;
+
+    if (tasksToRun.length === 0) {
+        console.log("No match found for given prompts.");
+        return;
+    }
+
+    for (const task of tasksToRun) {
         try {
             const sysContent = readPrompt(task.sys);
             const userContent = readPrompt(task.user);
