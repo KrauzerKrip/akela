@@ -90,6 +90,20 @@ global.Sequence = class extends Task {
     }
 }
 
+global.Embark = class extends Task {
+    constructor(vehicle, name) {
+        super('EMBARK', name);
+        this.vehicle = vehicle;
+    }
+}
+
+global.Disembark = class extends Task {
+    constructor(name) {
+        super('DISEMBARK', name);
+    }
+}
+
+
 class SyncPoint {
     constructor(name) {
         this.id = global.generateUuid();

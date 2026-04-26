@@ -22,6 +22,8 @@ All tasks inherit from a base class and support `.on(Event, callback)` and `.sig
 | **Report** | `new Report(message, name)` | Log a message to the command console. |
 | **Wait** | `new Wait(syncPoint, name)` | Pause execution until a specific Signal is received. Supports `.withCombatBehaviour()`. |
 | **Sequence** | `new Sequence(name)` | A container for chaining tasks using `.then(task)`. |
+| **Embark** | `new Embark(vehicle, name)` | Commands group to embark the vehicle. |
+| **Disembark** | `new Disembark(name)` | Commands group to disembark their vehicle. |
 
 ## Task Modifiers & Methods
 * **`.withCombatBehaviour(mode)`**: Sets unit state (e.g., "CARELESS", "AWARE", "COMBAT", "STEALTH").
@@ -38,6 +40,7 @@ Every group (e.g., `groups["Alpha"]`) has access to the following methods:
 * `.executeAndClearQueue(task)`: Alias for immediate override.
 * `.getCasualties()`: Returns the total number of dead units in the group.
 * `.getCasualtyRatio()`: Returns a float (0.0 to 1.0) representing percentage of the group lost.
+* `.getVehiclesByName(name)`: Returns an array of vehicles, i.e [{id: "someid", name: "B_LSV_01_AT_F"}]. Can be used with Embark task, e.g. `new Embark(groups["Alpha"].getVehiclesByName("B_LSV_01_AT_F")[0], "Bravo embarking Alpha's vehicle")`
 
 ## Event System
 Reactive logic in `.on()` receives one of the following event objects:

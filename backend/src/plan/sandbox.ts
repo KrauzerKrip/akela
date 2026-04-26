@@ -76,15 +76,18 @@ export class PlanSandbox {
             throw e;
         }
 
+        console.log(`[Sandbox] makePlan: Task reactions object sizes:`, Object.keys(plan.taskReactions).length);
         for (const [taskId, planReactions] of Object.entries(plan.taskReactions)) {
-            console.log(`Found reactions for taskId ${taskId}`);
+            console.log(`[Sandbox] makePlan: Process reactions for taskId ${taskId}, reactions object keys:`, Object.keys(planReactions));
             if (!this.taskReactions.has(taskId)) {
                 this.taskReactions.set(taskId, {});
+                console.log(`[Sandbox] makePlan: Created new reaction map for taskId ${taskId}`);
             }
             // "if" above ensures there is a record for this taskId so we can use "as" to hide the compiler error.
             const reactions = this.taskReactions.get(taskId) as Record<string, any>;
             for (const [eventId, planReaction] of Object.entries(planReactions)) {
                 reactions[eventId] = planReaction;
+                console.log(`[Sandbox] makePlan: Set reaction for taskId ${taskId}, eventId ${eventId}`);
             }
         }
 
@@ -114,14 +117,19 @@ export class PlanSandbox {
             taskReactions: {}
         };
         const planGroup = translateToPlanGroup(plan, group);
+        console.log(`[Sandbox] handlePlanEvent: Preparing to check if reactions exist for event type: ${event.type}`);
+        console.log(`[Sandbox] handlePlanEvent: reactions map defined? ${!!reactions}, keys? ${reactions ? Object.keys(reactions) : 'none'}`);
         if (reactions && reactions[event.type]) {
+            console.log(`[Sandbox] handlePlanEvent: FOUND exact callback for ${event.type}. Is function? ${typeof reactions[event.type]}`);
             const jsCallback = reactions[event.type];
             try {
                 console.log(`[Sandbox] Executing js callback for event ${event.type}`);
                 // Execute the JS callback inside the Arena
                 // Result might be a new Task object or null
                 jsCallback(event, planGroup);
+                console.log(`[Sandbox] handlePlanEvent: Evaluating updated plan.taskReactions... size=${Object.keys(plan.taskReactions).length}`);
                 for (const [taskId, planReactions] of Object.entries(plan.taskReactions)) {
+                    console.log(`[Sandbox] handlePlanEvent: new task reaction for taskId ${taskId}, keys:`, Object.keys(planReactions));
                     if (!this.taskReactions.has(taskId)) {
                         this.taskReactions.set(taskId, {});
                     }
@@ -129,6 +137,7 @@ export class PlanSandbox {
                     const reactions = this.taskReactions.get(taskId) as Record<string, any>;
                     for (const [eventId, planReaction] of Object.entries(planReactions)) {
                         reactions[eventId] = planReaction;
+                        console.log(`[Sandbox] handlePlanEvent: updated reaction for taskId ${taskId}, eventId ${eventId}`);
                     }
                 }
                 return plan;

@@ -12,14 +12,20 @@ const taskA = new Push([{ x: 10, y: 10 }], "Push forward")
 const taskA2 = new Report("it should not be executed or be in the queue if casualities > 0", "Name: test report");
 const taskA3 = new Assault([{ x: 10, y: 5 }], "Attack now!");
 
-const taskB = new Sequence("Wait and Report").then(
-    new Wait(phaseLineBlue)
-        .on(Event.ENEMY_CONTACT, (e, g) => {
-            if (e.count > 5) {
-                g.executeImmediately(new Report("Reporting: a lot of enemies.", "Report many enemies"));
-            }
-        })
-).then(new Report("Group Bravo had waited and reported!", "Bravo report"));
+const taskB = new Sequence("Wait and Report")
+    .then(
+        new Wait(phaseLineBlue)
+            .on(Event.ENEMY_CONTACT, (e, g) => {
+                if (e.count > 5) {
+                    g.executeImmediately(new Report("Reporting: a lot of enemies.", "Report many enemies"));
+                }
+            })
+    )
+    .then(new Report("Group Bravo had waited and reported!", "Bravo report"))
+    .then(new Embark(groups["Alpha"].getVehiclesByName("B_LSV_01_AT_F")[0], "Bravo embarking Alpha's vehicle"))
+    .then(new Push([{ x: 15, y: 15 }], "Bravo push"))
+    .then(new Disembark("Bravo disembarking"))
+    .then(new Assault([{ x: 20, y: 15 }], "Bravo attacking!"));
 
 groups["Alpha"].enqueue(taskA);
 groups["Alpha"].enqueue(taskA2);

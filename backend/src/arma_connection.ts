@@ -367,6 +367,30 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         }
     }
 
+    public async commandLoad(group: Group, vehicle: Vehicle): Promise<void> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        const armaVehicleGroupId = this.getArmaVehicleNetId(vehicle.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["commandUnload", armaGroupNetId, armaVehicleGroupId]]);
+            const data = result[0]?.[2];
+            if (Array.isArray(data) && data.length > 0 && data[0]?.[0] === "error") {
+                console.error(data[0]?.[1]);
+            }
+        }
+    }
+
+
+    public async commandUnload(group: Group): Promise<void> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            const result = await sendArmaRequest([["commandUnload", armaGroupNetId]]);
+            const data = result[0]?.[2];
+            if (Array.isArray(data) && data.length > 0 && data[0]?.[0] === "error") {
+                console.error(data[0]?.[1]);
+            }
+        }
+    }
+
     public async getGroupAssignedVehicles(group: Group): Promise<Vehicle[]> {
         const data = await this.getGroupAssignedArmaVehicles(group);
         const vehicles: Vehicle[] = [];

@@ -113,6 +113,8 @@ export interface GameExecutor {
     setFormation(group: Group, formation: string): Promise<void>;
     addGroupEventHandlers(group: Group): Promise<void>;
     getGroupLeaderPosition(group: Group): Promise<Point3D | null>;
+    commandLoad(group: Group, vehicle: Vehicle): Promise<void>;
+    commandUnload(group: Group): Promise<void>;
 }
 
 export interface GameEventDispatcher {
@@ -453,7 +455,7 @@ export class Report extends Task {
     }
 
     public static fromMessage(message: string, name: string) {
-        return new Report(uuidv4(), name, message)
+        return new Report(uuidv4(), name, message);
     }
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
@@ -541,6 +543,38 @@ export class WaitTask extends Task {
             name = `Waiting for '${signal.name}'`;
         }
         return new WaitTask(uuidv4(), name, signal);
+    }
+}
+
+export class Embark extends Task {
+    public readonly vehicle: Vehicle;
+    constructor(id: string, vehicle: Vehicle, name: string) {
+        super(id, "EMBARK", name);
+        this.vehicle = vehicle;
+    }
+
+    public static fromVehicle(vehicle: Vehicle, name: string) {
+        return new Embark(uuidv4(), vehicle, name);
+    }
+
+    public async execute(group: Group, executor: GameExecutor): Promise<void> {
+        console.log(`[EMBARK] ${group.getName()}: ${this.vehicle.name} (${this.vehicle.id})`);
+        executor.commandLoad(group, this.vehicle);
+    }
+}
+
+export class Disembark extends Task {
+    constructor(id: string, name: string) {
+        super(id, "DISEMBARK", name);
+    }
+
+    public static withName(name: string) {
+        return new Disembark(uuidv4(), name);
+    }
+
+    public async execute(group: Group, executor: GameExecutor): Promise<void> {
+        console.log(`[DISEMBARK] ${group.getName()}`);
+        executor.commandUnload(group);
     }
 }
 

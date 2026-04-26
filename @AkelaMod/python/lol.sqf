@@ -210,6 +210,55 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
+                    // --- COMMAND: LOAD VEHICLE ---
+                    case "commandLoad": {
+                        // _queryArg format: [troopGroupNetId, vehicleNetId]
+                        private _grp = groupFromNetId (_queryArg select 0);
+                        private _veh = objectFromNetId (_queryArg select 1);
+
+                        if (!isNull _grp && !isNull _veh) then {
+                            // 1. Tell the group this vehicle belongs to their transport pool
+                            _grp addVehicle _veh; 
+                            
+                            // 2. Order each unit to get in
+                            {
+                                if (alive _x && vehicle _x == _x) then { // If alive and on foot
+                                    [_x] allowGetIn true;
+                                    _x assignAsCargo _veh;
+                                    [_x] orderGetIn true;
+                                };
+                            } forEach units _grp;
+                            
+                            _queryResult = true;
+                        } else {
+                            _queryResult = ["error", "Group or Vehicle not found"];
+                        };
+                    };
+
+                    // --- COMMAND: UNLOAD VEHICLE ---
+                    case "commandUnload": {
+                        // _queryArg format: troopGroupNetId
+                        private _grp = groupFromNetId _queryArg;
+
+                        if (!isNull _grp) then {
+                            {
+                                if (alive _x && vehicle _x != _x) then { // If alive and inside a vehicle
+                                    unassignVehicle _x;
+                                    _x action ["getOut", vehicle _x];
+                                    [_x] orderGetIn false;
+                                    [_x] allowGetIn false;
+                                };
+                            } forEach units _grp;
+                            
+                            // Optional: Officially remove the vehicle from the group's memory
+                            _grp leaveVehicle (assignedVehicle (leader _grp));
+                            
+                            _queryResult = true;
+                        } else {
+                            _queryResult = ["error", "Group not found"];
+                        };
+                    };
+
                     case "addEventHandlers": {
                         private _grp = groupFromNetId _queryArg;
                         if (!isNull _grp) then {

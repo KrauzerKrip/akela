@@ -46,6 +46,11 @@ export interface PlanAmmo {
     secondaryWeapon: number;
 }
 
+export interface PlanVehicle {
+    readonly id: string;
+    name: string;
+}
+
 export interface PlanGroup {
     id: string;
     getCasualtyRatio(): number;
@@ -55,4 +60,5 @@ export interface PlanGroup {
     enqueue(jsTask: any): void;
     executeImmediately(jsTask: any): void;
     executeAndClearQueue(jsTask: any): void;
+    getVehiclesByName(name: string): PlanVehicle[];
 }
