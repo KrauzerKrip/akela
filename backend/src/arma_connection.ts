@@ -371,7 +371,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         const armaGroupNetId = this.getArmaGroupNetId(group.id);
         const armaVehicleGroupId = this.getArmaVehicleNetId(vehicle.id);
         if (armaGroupNetId !== undefined) {
-            const result = await sendArmaRequest([["commandUnload", armaGroupNetId, armaVehicleGroupId]]);
+            const result = await sendArmaRequest([["commandLoad", armaGroupNetId, armaVehicleGroupId]]);
             const data = result[0]?.[2];
             if (Array.isArray(data) && data.length > 0 && data[0]?.[0] === "error") {
                 console.error(data[0]?.[1]);
