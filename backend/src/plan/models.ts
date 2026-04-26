@@ -61,4 +61,5 @@ export interface PlanGroup {
     executeImmediately(jsTask: any): void;
     executeAndClearQueue(jsTask: any): void;
     getVehiclesByName(name: string): PlanVehicle[];
+    on(event: string, callback: any): PlanGroup;
 }

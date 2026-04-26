@@ -4,6 +4,8 @@ import { PlanGroup, Plan, SyncPoint, PlanVehicle } from "./models";
 import { v4 as uuidv4 } from "uuid";
 
 export function translateToPlanGroup(plan: Plan, group: Group): PlanGroup {
+    const groupReactions: Record<string, any> = {};
+
     return {
         id: group.id,
         getCasualties() {
@@ -18,32 +20,38 @@ export function translateToPlanGroup(plan: Plan, group: Group): PlanGroup {
         enqueue(jsTask) {
             const task = translateTask(jsTask);
             console.log(`[Translation] enqueue: jsTask.id=${jsTask.id}, translatedTaskId=${task.id}`);
-            console.log(`[Translation] enqueue: jsTask.reactions keys =`, jsTask.reactions ? Object.keys(jsTask.reactions) : 'undefined/null');
-            if (jsTask.reactions) {
-                console.log(`[Translation] enqueue: jsTask.reactions detail =`, jsTask.reactions);
-            }
+
             if (!plan.queuedTasks[group.id]) {
                 plan.queuedTasks[group.id] = [];
             }
             plan.queuedTasks[group.id].push(task);
-            plan.taskReactions[task.id] = jsTask.reactions || {};
+
+            // 3. Merge groupReactions with task specific reactions
+            plan.taskReactions[task.id] = { ...groupReactions, ...(jsTask.reactions || {}) };
+
             console.log(`[Translation] enqueue: Registered reactions for task ${task.id}:`, Object.keys(plan.taskReactions[task.id]));
         },
         executeImmediately(jsTask) {
             const task = translateTask(jsTask);
             console.log(`[Translation] executeImmediately: jsTask.id=${jsTask.id}, translatedTaskId=${task.id}`);
-            console.log(`[Translation] executeImmediately: jsTask.reactions keys =`, jsTask.reactions ? Object.keys(jsTask.reactions) : 'undefined/null');
+
             plan.immediateTasks[group.id] = task;
-            plan.taskReactions[task.id] = jsTask.reactions || {};
+
+            // Merge groupReactions with task specific reactions
+            plan.taskReactions[task.id] = { ...groupReactions, ...(jsTask.reactions || {}) };
+
             console.log(`[Translation] executeImmediately: Registered reactions for task ${task.id}:`, Object.keys(plan.taskReactions[task.id]));
         },
         executeAndClearQueue(jsTask) {
             const task = translateTask(jsTask);
             console.log(`[Translation] executeAndClearQueue: jsTask.id=${jsTask.id}, translatedTaskId=${task.id}`);
-            console.log(`[Translation] executeAndClearQueue: jsTask.reactions keys =`, jsTask.reactions ? Object.keys(jsTask.reactions) : 'undefined/null');
+
             plan.immediateTasks[group.id] = task;
             plan.clearGroupTasks[group.id] = true;
-            plan.taskReactions[task.id] = jsTask.reactions || {};
+
+            // Merge groupReactions with task specific reactions
+            plan.taskReactions[task.id] = { ...groupReactions, ...(jsTask.reactions || {}) };
+
             console.log(`[Translation] executeAndClearQueue: Registered reactions for task ${task.id}:`, Object.keys(plan.taskReactions[task.id]));
         },
         getVehiclesByName(name: string): PlanVehicle[] {
@@ -55,7 +63,11 @@ export function translateToPlanGroup(plan: Plan, group: Group): PlanGroup {
                 }
             }
             return vehicles;
-        }
+        },
+        on(event: string, callback: any) {
+            groupReactions[event] = callback;
+            return this; // Allows chaining: group.on().on()
+        },
     }
 }
 
