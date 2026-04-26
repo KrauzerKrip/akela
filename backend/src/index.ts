@@ -229,7 +229,7 @@ try {
                         count: event.contactCount,
                         kind: event.kind
                     };
-                } else if (event.type === "KIA" || event.type === "ENGAGED_IN_COMBAT" || event.type === "COMBAT_ENDED") {
+                } else if (event.type === "KIA" || event.type === "ENGAGED_IN_COMBAT" || event.type === "COMBAT_ENDED" || event.type === "TIMEOUT") {
                     planEvent = { type: event.type };
                 }
 

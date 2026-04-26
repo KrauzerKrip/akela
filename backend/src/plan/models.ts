@@ -31,6 +31,10 @@ export interface CombatEndedPlanEvent extends PlanEvent {
     type: "COMBAT_ENDED";
 }
 
+export interface TimeoutEvent extends PlanEvent {
+    type: "TIMEOUT";
+}
+
 export interface SyncPoint {
     id: string;
     name: string;

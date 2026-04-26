@@ -1,7 +1,7 @@
 // DO NOT USE THIS FILE DIRECTLY
 // This file is to use with quickjs-emscripten for plan sandboxing.
 
-global.Event = { ENEMY_CONTACT: 'ENEMY_CONTACT', KIA: 'KIA', ENGAGED_IN_COMBAT: "ENGAGED_IN_COMBAT", COMBAT_ENDED: "COMBAT_ENDED" };
+global.Event = { ENEMY_CONTACT: 'ENEMY_CONTACT', KIA: 'KIA', ENGAGED_IN_COMBAT: "ENGAGED_IN_COMBAT", COMBAT_ENDED: "COMBAT_ENDED", TIMEOUT: "TIMEOUT" };
 
 class Task {
     constructor(type, name) {

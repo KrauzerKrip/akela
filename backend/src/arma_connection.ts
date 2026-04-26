@@ -1,4 +1,4 @@
-import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, EngineGroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, EngineGroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle, EmbarkingCompleteEvent } from "./army";
 import { GameExecutor } from "./army";
 import { Point, Point3D } from "./geography";
 import { sendArmaRequest } from "./server";
@@ -113,6 +113,15 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
                     position: position,
                     kind: kind
                 } as EnemyDetectedEvent;
+            }
+            case "LoadComplete": {
+                const vehicleId = this.getVehicleId(params[1]);
+                const status = params[2];
+                return {
+                    type: "EMBARKING_COMPLETE",
+                    vehicleId: vehicleId,
+                    status: status,
+                } as EmbarkingCompleteEvent;
             }
         }
 
@@ -371,7 +380,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         const armaGroupNetId = this.getArmaGroupNetId(group.id);
         const armaVehicleGroupId = this.getArmaVehicleNetId(vehicle.id);
         if (armaGroupNetId !== undefined) {
-            const result = await sendArmaRequest([["commandLoad", armaGroupNetId, armaVehicleGroupId]]);
+            const result = await sendArmaRequest([["commandLoad", [armaGroupNetId, armaVehicleGroupId]]]);
             const data = result[0]?.[2];
             if (Array.isArray(data) && data.length > 0 && data[0]?.[0] === "error") {
                 console.error(data[0]?.[1]);

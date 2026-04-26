@@ -63,8 +63,14 @@ export interface TaskCompletedEvent extends EngineGroupEvent {
 }
 
 export interface SignalEvent extends EngineGroupEvent {
-    type: "SIGNAL",
+    type: "SIGNAL";
     signal: Signal;
+}
+
+export interface EmbarkingCompleteEvent extends EngineGroupEvent {
+    type: "EMBARKING_COMPLETE";
+    vehicleId: string;
+    status: "Complete" | "VehicleDestroyed" | "Timeout";
 }
 
 export interface TacticalGroupEvent extends GroupEvent {
@@ -86,13 +92,17 @@ export interface CombatEndedEvent extends TacticalGroupEvent {
     type: "COMBAT_ENDED";
 }
 
-export interface KIA extends TacticalGroupEvent {
+export interface KiaEvent extends TacticalGroupEvent {
     type: "KIA";
 }
 
 export interface TacticalReportEvent extends TacticalGroupEvent {
     type: "TACTICAL_REPORT";
     message: string;
+}
+
+export interface TimeoutEvent extends TacticalGroupEvent {
+    type: "TIMEOUT";
 }
 
 export interface Signal {
@@ -560,6 +570,22 @@ export class Embark extends Task {
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         console.log(`[EMBARK] ${group.getName()}: ${this.vehicle.name} (${this.vehicle.id})`);
         executor.commandLoad(group, this.vehicle);
+
+        // Return a Promise that resolves when the domain event fires
+        return new Promise((resolve) => {
+            const completionListener = (event: EngineGroupEvent) => {
+                if (event.type === "EmbarkingCompleteEvent") {
+                    const ecEvent = event as EmbarkingCompleteEvent;
+
+                    if (ecEvent.vehicleId === this.vehicle.id && ecEvent.status === "Complete") {
+                        group.unsubscribe(completionListener); // Cleanup!
+                        resolve(); // This finally unblocks the task!
+                    }
+                }
+            };
+
+            group.subscribe(completionListener);
+        });
     }
 }
 

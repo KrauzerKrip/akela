@@ -51,6 +51,8 @@ Reactive logic in `.on()` receives one of the following event objects:
     * *Kinds: "Soldier", "Tank", "WheeledAPC", "TrackedAPC", "Helicopter", "Plane", "Ship", "StaticWeapon", "Car"*
 * **`Event.ENGAGED_IN_COMBAT`**: `{ type: "ENGAGED_IN_COMBAT" }`
 * **`Event.COMBAT_ENDED`**: `{ type: "COMBAT_ENDED" }`
+* **`Event.TIMEOUT`**: `{type: "TIMEOUT}`
+    * *Used with Embark task to handle if units of the group didn't embark in time*
 
 **Note on Event Listeners (`.on()`)**:
 * **Group-level** (`group.on(...)`): Use this to set general rules that apply to everything the group does (e.g., "If this group takes 40% casualties at any point, retreat").

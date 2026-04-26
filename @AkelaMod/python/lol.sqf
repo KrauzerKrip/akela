@@ -210,31 +210,56 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
-                    // --- COMMAND: LOAD VEHICLE ---
+// --- COMMAND: LOAD VEHICLE ---
                     case "commandLoad": {
                         // _queryArg format: [troopGroupNetId, vehicleNetId]
                         private _grp = groupFromNetId (_queryArg select 0);
                         private _veh = objectFromNetId (_queryArg select 1);
 
                         if (!isNull _grp && !isNull _veh) then {
-                            // 1. Tell the group this vehicle belongs to their transport pool
                             _grp addVehicle _veh; 
                             
-                            // 2. Order each unit to get in
+                            // Order everyone in
                             {
-                                if (alive _x && vehicle _x == _x) then { // If alive and on foot
+                                if (alive _x && vehicle _x == _x) then { 
                                     [_x] allowGetIn true;
                                     _x assignAsCargo _veh;
                                     [_x] orderGetIn true;
                                 };
                             } forEach units _grp;
                             
+                            // === NEW: SPAWN THE MONITOR THREAD ===
+                            [_grp, _veh] spawn {
+                                params ["_grp", "_veh"];
+                                private _timeout = time + 60; // Give them 60 seconds max to board
+                                
+                                // Wait until everyone alive is inside, the vehicle dies, or time runs out
+                                waitUntil {
+                                    sleep 2; // Check every 2 seconds to save CPU
+                                    
+                                    // Count how many alive troops are still on foot
+                                    private _unitsOutside = {alive _x && vehicle _x == _x} count (units _grp);
+                                    
+                                    // The conditions to break the wait loop
+                                    (_unitsOutside == 0) || !(alive _veh) || (time > _timeout)
+                                };
+
+                                // Determine the result
+                                private _status = "Complete";
+                                if (!(alive _veh)) then { _status = "VehicleDestroyed"; }
+                                else {
+                                    if (time > _timeout) then { _status = "Timeout"; };
+                                };
+
+                                // Send the event back to Python
+                                ["AkelaMod.on_event", ["LoadComplete", [netId _grp, netId _veh, _status]]] call py3_fnc_callExtension;
+                            };
+                            
                             _queryResult = true;
                         } else {
                             _queryResult = ["error", "Group or Vehicle not found"];
                         };
                     };
-
                     // --- COMMAND: UNLOAD VEHICLE ---
                     case "commandUnload": {
                         // _queryArg format: troopGroupNetId
