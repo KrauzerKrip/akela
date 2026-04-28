@@ -1,0 +1,14 @@
+---
+description: Session artifact integrity and telemetry lifecycle requirements
+alwaysApply: true
+---
+
+# Akela Observability And Session Data
+
+- Preserve session output layout under `.data/sessions/<id>`.
+- Do not break `manifest.json` structure used for plan events, inputs, and intel summaries.
+- Keep observability instrumentation behavior stable in `backend/src/instrumentation.ts`.
+- Maintain Langfuse/OpenTelemetry lifecycle correctness:
+  - tracing initialization must run when pipeline starts.
+  - graceful shutdown must flush/export telemetry (including `sdk.shutdown()` paths).
+- When changing agent runtime flow, verify telemetry/session writes still occur across the full Intel, Plan, and Execution cycle.

@@ -1,0 +1,16 @@
+---
+description: Preserve Intel Plan Execution architecture boundaries
+alwaysApply: true
+---
+
+# Akela Architecture Guardrails
+
+- Preserve the `Intel -> Plan -> Execution` pipeline contract in `backend/src/agent.ts` and `backend/src/index.ts`.
+- Keep agent responsibilities distinct:
+  - `IntelAgent`: intelligence/image analysis.
+  - `PlanAgent`: plan synthesis and sandboxed plan-code reasoning.
+  - `ExecutionAgent`: runtime adaptation based on streamed SITREPs.
+- Maintain strongly typed domain semantics in `backend/src/army.ts` and `backend/src/combat.ts`:
+  - `Army`, `Group`, `Unit`, `Task`, `Waypoint`.
+  - `ArmyCombatMonitor` event-driven combat behavior.
+- Do not weaken typed tool/sandbox boundaries; preserve strict schemas (for example, `zod`) and async context safety.
