@@ -6,11 +6,13 @@ alwaysApply: true
 # Akela Runtime And Environment
 
 - Use `bun` for backend execution (`bun run <file>` or `bun build`).
+- Prefer running Bun through the flake shell when available: `nix develop -c bun ...`.
 - Never use `bun run tsc`.
 - Prefer direct run patterns like `bun run src/index.ts --params params.json`.
+- Prefer script shortcuts that enforce the flake runtime (for example `backend/package.json` -> `dev:nix`).
 - Ensure runtime/config changes account for required env vars:
   - `SESSION_DB_URL`
   - `LANGFUSE_PUBLIC_KEY`
   - `LANGFUSE_SECRET_KEY`
   - `LANGFUSE_HOST`
-- If command execution fails due to missing `bun`, ensure shell environment setup is activated first.
+- If command execution fails due to missing `bun`, run through flake (`nix develop -c <command>`) first.
