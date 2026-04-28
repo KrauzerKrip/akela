@@ -130,10 +130,74 @@ groups["Alpha"]
     sandbox.dispose();
 }
 
+async function testAdditionalPlanReplacesOverlappingGroupReactionOnly() {
+    const { army, alpha } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const initialCode = `
+groups["Alpha"]
+  .on(Event.KIA, (event, group) => {
+    group.executeImmediately(new Report("old kia", "old_group_kia"));
+  })
+  .on(Event.ENEMY_CONTACT, (event, group) => {
+    group.executeImmediately(new Report("old contact", "old_group_contact"));
+  });
+`;
+    await sandbox.makePlan(army, initialCode);
+
+    const additionalCode = `
+groups["Alpha"]
+  .on(Event.KIA, (event, group) => {
+    group.executeImmediately(new Report("new kia", "new_group_kia"));
+  });
+`;
+    await sandbox.makePlan(army, additionalCode, { resetMode: "preserveReactions" });
+
+    const kiaReactionPlan = sandbox.handlePlanEvent(alpha, { type: "KIA" });
+    assert.ok(kiaReactionPlan, "Overlapping KIA group reaction should still exist");
+    assert.equal(getTaskNameForGroup(kiaReactionPlan, alpha.id), "new_group_kia");
+
+    const contactReactionPlan = sandbox.handlePlanEvent(alpha, { type: "ENEMY_CONTACT", kind: "soldier", count: 2 });
+    assert.ok(contactReactionPlan, "Non-overlapping ENEMY_CONTACT group reaction should be preserved");
+    assert.equal(getTaskNameForGroup(contactReactionPlan, alpha.id), "old_group_contact");
+    sandbox.dispose();
+}
+
+async function testAdditionalPlanKeepsTaskReactions() {
+    const { army, alpha } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const initialCode = `
+groups["Alpha"]
+  .executeImmediately(
+    new Wait(new SyncPoint("never"), "hold_position")
+      .on(Event.KIA, (event, group) => {
+        group.executeImmediately(new Report("task kia", "task_kia_persisted"));
+      })
+  );
+`;
+    const initialPlan = await sandbox.makePlan(army, initialCode);
+    await alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const additionalCode = `
+groups["Alpha"]
+  .on(Event.ENEMY_CONTACT, (event, group) => {
+    group.executeImmediately(new Report("contact", "group_contact_new"));
+  });
+`;
+    await sandbox.makePlan(army, additionalCode, { resetMode: "preserveReactions" });
+
+    const reactionPlan = sandbox.handlePlanEvent(alpha, { type: "KIA" });
+    assert.ok(reactionPlan, "Task reaction from previous plan should persist for additional plans");
+    assert.equal(getTaskNameForGroup(reactionPlan, alpha.id), "task_kia_persisted");
+    sandbox.dispose();
+}
+
 async function test() {
     await testIdleGroupReaction();
     await testTaskOverridesGroupReaction();
     await testGroupFallbackWhenTaskHasNoEventReaction();
+    await testAdditionalPlanReplacesOverlappingGroupReactionOnly();
+    await testAdditionalPlanKeepsTaskReactions();
     console.log("All sandbox reaction tests passed.");
 }
 

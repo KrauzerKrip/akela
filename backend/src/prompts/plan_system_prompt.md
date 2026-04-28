@@ -36,7 +36,7 @@ All tasks inherit from a base class and support `.on(Event, callback)` and `.sig
 
 ## Group Control (The `groups` Object)
 Every group (e.g., `groups["Alpha"]`) has access to the following methods:
-* `.on(Event, (event, group) => { ... })`: Attaches a persistent, group-wide reaction. Any reaction defined here will automatically be inherited by **all** tasks subsequently assigned to this group. Excellent for defining baseline operational rules (e.g., fallback protocols on high casualties). Supports chaining.
+* `.on(Event, (event, group) => { ... })`: Attaches a persistent, group-wide reaction that remains active for the whole plan period, including when the group has no current task. Supports chaining.
 * `.enqueue(task)`: Adds a task to the end of the group's current queue.
 * `.executeImmediately(task)`: Clears the current queue and starts the provided task instantly.
 * `.executeAndClearQueue(task)`: Alias for immediate override.
@@ -56,7 +56,9 @@ Reactive logic in `.on()` receives one of the following event objects:
 
 **Note on Event Listeners (`.on()`)**:
 * **Group-level** (`group.on(...)`): Use this to set general rules that apply to everything the group does (e.g., "If this group takes 40% casualties at any point, retreat").
-* **Task-level** (`new Push(...).on(...)`): Use this for highly specific reactions tied only to a single phase of movement (e.g., "If this group takes fire *while crossing this specific field* assault"). Both group-level and task-level reactions will trigger if they overlap.
+* **Task-level** (`new Push(...).on(...)`): Use this for highly specific reactions tied only to a single phase of movement (e.g., "If this group takes fire *while crossing this specific field* assault").
+* **Priority rule**: If both task-level and group-level callbacks exist for the same event, only the task-level callback executes for that event.
+* **Registration rule**: Within the same scope and event type, the latest `.on(...)` assignment replaces the previous one.
 
 # SANDBOX CONSTRAINTS & RULES
 1. **Valid JS**: You must provide valid QuickJS-compatible code avoiding errors.

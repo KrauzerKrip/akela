@@ -8,6 +8,12 @@ import { PlanEvent, PlanGroup, Plan } from "./models";
 import { Point } from "../geography";
 import { translateTask, translateToPlanGroup } from "./translation";
 
+export type PlanSandboxResetMode = "full" | "preserveReactions";
+
+export interface MakePlanOptions {
+    resetMode?: PlanSandboxResetMode;
+}
+
 export class PlanSandbox {
     private quickJS: any;
     private arena: Arena;
@@ -35,7 +41,7 @@ export class PlanSandbox {
         return new PlanSandbox(QuickJS, arena);
     }
 
-    public async reset() {
+    public async reset(clearReactions: boolean = true) {
         if (this.arena) {
             this.arena.dispose();
         }
@@ -44,12 +50,15 @@ export class PlanSandbox {
         this.arena.evalCode(`globalThis.global = globalThis;`);
         const bootstrapCode = fs.readFileSync(path.join(import.meta.dir, 'bootstrap.js'), 'utf8');
         this.arena.evalCode(bootstrapCode);
-        this.taskReactions.clear();
-        this.groupReactions.clear();
+        if (clearReactions) {
+            this.taskReactions.clear();
+            this.groupReactions.clear();
+        }
     }
 
-    public async makePlan(army: Army, code: string): Promise<Plan> {
-        await this.reset();
+    public async makePlan(army: Army, code: string, options: MakePlanOptions = {}): Promise<Plan> {
+        const resetMode = options.resetMode ?? "full";
+        await this.reset(resetMode === "full");
         console.log(`[Sandbox] Making plan for army...`);
 
         let plan: Plan = {
@@ -79,6 +88,9 @@ export class PlanSandbox {
             throw e;
         }
 
+        if (resetMode === "preserveReactions") {
+            this.pruneOverlappingGroupReactions(plan.groupReactions, "makePlan");
+        }
         this.mergeTaskReactions(plan.taskReactions, "makePlan");
         this.mergeGroupReactions(plan.groupReactions, "makePlan");
 
@@ -150,6 +162,22 @@ export class PlanSandbox {
             for (const [eventId, planReaction] of Object.entries(planReactions)) {
                 reactions[eventId] = planReaction;
                 console.log(`[Sandbox] ${source}: set group reaction groupId=${groupId}, eventId=${eventId}`);
+            }
+        }
+    }
+
+    private pruneOverlappingGroupReactions(groupReactions: Record<string, Record<string, any>>, source: string) {
+        for (const [groupId, incomingReactions] of Object.entries(groupReactions)) {
+            const existingReactions = this.groupReactions.get(groupId);
+            if (!existingReactions) {
+                continue;
+            }
+
+            for (const eventId of Object.keys(incomingReactions)) {
+                if (eventId in existingReactions) {
+                    delete existingReactions[eventId];
+                    console.log(`[Sandbox] ${source}: removed overlapping group reaction groupId=${groupId}, eventId=${eventId}`);
+                }
             }
         }
     }
