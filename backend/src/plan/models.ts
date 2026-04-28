@@ -5,7 +5,8 @@ export interface Plan {
     immediateTasks: Record<string, Task>;
     queuedTasks: Record<string, Task[]>;
     clearGroupTasks: Record<string, boolean>; // signals if the group task queue should be cleared
-    taskReactions: Record<string, Record<string, any>>; // taskId, Record<eventType, jsCallback>
+    taskReactions: Record<string, Record<string, any>>; // taskId -> eventType -> jsCallback
+    groupReactions: Record<string, Record<string, any>>; // groupId -> eventType -> persistent jsCallback
 }
 
 export interface PlanEvent {

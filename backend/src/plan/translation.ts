@@ -19,6 +19,9 @@ import { v4 as uuidv4 } from "uuid";
 
 export function translateToPlanGroup(plan: Plan, group: Group): PlanGroup {
   const groupReactions: Record<string, any> = {};
+  if (!plan.groupReactions[group.id]) {
+    plan.groupReactions[group.id] = {};
+  }
 
   return {
     id: group.id,
@@ -110,6 +113,7 @@ export function translateToPlanGroup(plan: Plan, group: Group): PlanGroup {
     },
     on(event: string, callback: any) {
       groupReactions[event] = callback;
+      plan.groupReactions[group.id][event] = callback;
       return this; // Allows chaining: group.on().on()
     },
   };

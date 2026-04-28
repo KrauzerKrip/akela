@@ -12,6 +12,7 @@ export class PlanSandbox {
     private quickJS: any;
     private arena: Arena;
     private taskReactions = new Map<string, Record<string, any>>();
+    private groupReactions = new Map<string, Record<string, any>>();
 
     private constructor(quickJS: any, arena: Arena) {
         this.quickJS = quickJS;
@@ -44,6 +45,7 @@ export class PlanSandbox {
         const bootstrapCode = fs.readFileSync(path.join(import.meta.dir, 'bootstrap.js'), 'utf8');
         this.arena.evalCode(bootstrapCode);
         this.taskReactions.clear();
+        this.groupReactions.clear();
     }
 
     public async makePlan(army: Army, code: string): Promise<Plan> {
@@ -54,7 +56,8 @@ export class PlanSandbox {
             immediateTasks: {},
             queuedTasks: {},
             clearGroupTasks: {},
-            taskReactions: {}
+            taskReactions: {},
+            groupReactions: {},
         }
 
         const planGroups: Record<string, PlanGroup> = {};
@@ -76,20 +79,8 @@ export class PlanSandbox {
             throw e;
         }
 
-        console.log(`[Sandbox] makePlan: Task reactions object sizes:`, Object.keys(plan.taskReactions).length);
-        for (const [taskId, planReactions] of Object.entries(plan.taskReactions)) {
-            console.log(`[Sandbox] makePlan: Process reactions for taskId ${taskId}, reactions object keys:`, Object.keys(planReactions));
-            if (!this.taskReactions.has(taskId)) {
-                this.taskReactions.set(taskId, {});
-                console.log(`[Sandbox] makePlan: Created new reaction map for taskId ${taskId}`);
-            }
-            // "if" above ensures there is a record for this taskId so we can use "as" to hide the compiler error.
-            const reactions = this.taskReactions.get(taskId) as Record<string, any>;
-            for (const [eventId, planReaction] of Object.entries(planReactions)) {
-                reactions[eventId] = planReaction;
-                console.log(`[Sandbox] makePlan: Set reaction for taskId ${taskId}, eventId ${eventId}`);
-            }
-        }
+        this.mergeTaskReactions(plan.taskReactions, "makePlan");
+        this.mergeGroupReactions(plan.groupReactions, "makePlan");
 
         return plan;
     }
@@ -97,58 +88,70 @@ export class PlanSandbox {
     public handlePlanEvent<EventType extends PlanEvent>(group: Group, event: EventType): Plan | null {
         console.log(`[Sandbox] handlePlanEvent: group=${group.id}, event=${event.type}`);
         const currentTask = group.getCurrentTask();
-        if (!currentTask) {
-            console.log(`[Sandbox] No current task for group ${group.id}`);
-            return null;
-        }
-        console.log(`[Sandbox] Current task for group ${group.id}: ${currentTask.id} (${currentTask.type})`);
+        const taskReactions = currentTask ? this.taskReactions.get(currentTask.id) : undefined;
+        const groupReactions = this.groupReactions.get(group.id);
 
-        const reactions = this.taskReactions.get(currentTask.id);
-        if (reactions) {
-            console.log(`[Sandbox] Found reactions for task ${currentTask.id}: ${Object.keys(reactions).join(", ")}`);
+        if (currentTask) {
+            console.log(`[Sandbox] Current task for group ${group.id}: ${currentTask.id} (${currentTask.type})`);
         } else {
-            console.log(`[Sandbox] No reactions found for task ${currentTask.id}`);
+            console.log(`[Sandbox] No current task for group ${group.id}`);
+        }
+
+        const jsCallback = taskReactions?.[event.type] ?? groupReactions?.[event.type];
+        if (!jsCallback) {
+            console.log(`[Sandbox] No callback found for event ${event.type} (task override semantics).`);
+            return null;
         }
 
         const plan: Plan = {
             queuedTasks: {},
             immediateTasks: {},
             clearGroupTasks: {},
-            taskReactions: {}
+            taskReactions: {},
+            groupReactions: {},
         };
         const planGroup = translateToPlanGroup(plan, group);
-        console.log(`[Sandbox] handlePlanEvent: Preparing to check if reactions exist for event type: ${event.type}`);
-        console.log(`[Sandbox] handlePlanEvent: reactions map defined? ${!!reactions}, keys? ${reactions ? Object.keys(reactions) : 'none'}`);
-        if (reactions && reactions[event.type]) {
-            console.log(`[Sandbox] handlePlanEvent: FOUND exact callback for ${event.type}. Is function? ${typeof reactions[event.type]}`);
-            const jsCallback = reactions[event.type];
-            try {
-                console.log(`[Sandbox] Executing js callback for event ${event.type}`);
-                // Execute the JS callback inside the Arena
-                // Result might be a new Task object or null
-                jsCallback(event, planGroup);
-                console.log(`[Sandbox] handlePlanEvent: Evaluating updated plan.taskReactions... size=${Object.keys(plan.taskReactions).length}`);
-                for (const [taskId, planReactions] of Object.entries(plan.taskReactions)) {
-                    console.log(`[Sandbox] handlePlanEvent: new task reaction for taskId ${taskId}, keys:`, Object.keys(planReactions));
-                    if (!this.taskReactions.has(taskId)) {
-                        this.taskReactions.set(taskId, {});
-                    }
-                    // "if" above ensures there is a record for this taskId so we can use "as" to hide the compiler error.
-                    const reactions = this.taskReactions.get(taskId) as Record<string, any>;
-                    for (const [eventId, planReaction] of Object.entries(planReactions)) {
-                        reactions[eventId] = planReaction;
-                        console.log(`[Sandbox] handlePlanEvent: updated reaction for taskId ${taskId}, eventId ${eventId}`);
-                    }
-                }
-                return plan;
-            } catch (err) {
-                console.error(`[Sandbox] Callback error on event ${event.type}:`, err);
-            }
-        } else if (reactions) {
-            console.log(`[Sandbox] No specific callback for event type ${event.type}`);
+        try {
+            console.log(`[Sandbox] Executing callback for event ${event.type}`);
+            jsCallback(event, planGroup);
+            this.mergeTaskReactions(plan.taskReactions, "handlePlanEvent");
+            this.mergeGroupReactions(plan.groupReactions, "handlePlanEvent");
+            return plan;
+        } catch (err) {
+            console.error(`[Sandbox] Callback error on event ${event.type}:`, err);
         }
 
         return null;
+    }
+
+    private mergeTaskReactions(taskReactions: Record<string, Record<string, any>>, source: string) {
+        console.log(`[Sandbox] ${source}: task reactions object size=${Object.keys(taskReactions).length}`);
+        for (const [taskId, planReactions] of Object.entries(taskReactions)) {
+            if (!this.taskReactions.has(taskId)) {
+                this.taskReactions.set(taskId, {});
+            }
+
+            const reactions = this.taskReactions.get(taskId) as Record<string, any>;
+            for (const [eventId, planReaction] of Object.entries(planReactions)) {
+                reactions[eventId] = planReaction;
+                console.log(`[Sandbox] ${source}: set task reaction taskId=${taskId}, eventId=${eventId}`);
+            }
+        }
+    }
+
+    private mergeGroupReactions(groupReactions: Record<string, Record<string, any>>, source: string) {
+        console.log(`[Sandbox] ${source}: group reactions object size=${Object.keys(groupReactions).length}`);
+        for (const [groupId, planReactions] of Object.entries(groupReactions)) {
+            if (!this.groupReactions.has(groupId)) {
+                this.groupReactions.set(groupId, {});
+            }
+
+            const reactions = this.groupReactions.get(groupId) as Record<string, any>;
+            for (const [eventId, planReaction] of Object.entries(planReactions)) {
+                reactions[eventId] = planReaction;
+                console.log(`[Sandbox] ${source}: set group reaction groupId=${groupId}, eventId=${eventId}`);
+            }
+        }
     }
 
 

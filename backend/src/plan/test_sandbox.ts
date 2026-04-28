@@ -1,8 +1,6 @@
 import { PlanSandbox } from "./sandbox";
-import { Army, Group, GameExecutor, Waypoint, UnitKilledEvent, Unit, GameEventDispatcher, EngineGroupEvent, Loadout } from "../army";
-import * as fs from "fs";
-import * as path from "path";
-import { KiaPlanEvent } from "./models";
+import { Army, Group, GameExecutor, Waypoint, Unit, Loadout } from "../army";
+import { strict as assert } from "assert";
 
 class DummyExecutor implements GameExecutor {
     getGroups(side: string): Promise<Group[]> {
@@ -32,40 +30,11 @@ class DummyExecutor implements GameExecutor {
     async setFormation(group: Group, formation: string) { }
 }
 
-type GroupEventHandler = (event: EngineGroupEvent) => void;
-
-class DummyEventDispatcher implements GameEventDispatcher {
-    private eventHandlers: Map<string, Map<string, GroupEventHandler>> = new Map<string, Map<string, GroupEventHandler>>;
-
-    public fireGroupEvent(event: EngineGroupEvent) {
-        let groupHandlers = this.eventHandlers.get(event.groupId);
-        if (groupHandlers) {
-            let handler = groupHandlers.get(event.type);
-            if (handler) {
-                handler(event);
-            }
-        }
-    }
-
-    public addGroupHandler<EventType extends EngineGroupEvent>(group: Group, eventType: string, callback: (event: EventType) => void): void {
-        if (!this.eventHandlers.has(group.id)) {
-            this.eventHandlers.set(group.id, new Map<string, GroupEventHandler>());
-        }
-        const groupEventHandlers = this.eventHandlers.get(group.id);
-        groupEventHandlers?.set(eventType, callback as GroupEventHandler);
-    }
-}
-
-async function test() {
-    console.log("Setting up Army...");
+async function setupArmy() {
     const executor = new DummyExecutor();
-    const eventDispatcher = new DummyEventDispatcher();
     const army = new Army("BLUFOR");
     const alpha = new Group("alpha-id", "Alpha", executor);
     const bravo = new Group("bravo-id", "Bravo", executor);
-
-    alpha.setupEventHandlers(eventDispatcher);
-    bravo.setupEventHandlers(eventDispatcher);
 
     for (let i = 0; i < 4; i++) {
         const unitA = new Unit(`unitA_${i}_id`, `Unit Alpha ${i}`, {
@@ -86,78 +55,89 @@ async function test() {
 
     army.addGroup(alpha);
     army.addGroup(bravo);
-
-    const sandbox = await PlanSandbox.create();
-
-    console.log("Reading example.js...");
-    const code = fs.readFileSync(path.join(import.meta.dir, "example.js"), 'utf-8');
-
-    console.log("Making plan...");
-    const plan = await sandbox.makePlan(army, code);
-    const groups = army.getGroups();
-
-    // We store the promises but do NOT await them immediately if they are 
-    // long-running tasks (like Push or Wait). If we await them here, the script 
-    // pauses, and we can never fire the simulated KIA event below!
-    const immediateTaskPromises = [];
-    console.log(plan);
-
-    for (const group of groups) {
-        if (plan.queuedTasks[group.id]) {
-            plan.queuedTasks[group.id].forEach((task) => {
-                // This naturally triggers group.executeNext() in the background
-                group.addTaskToQueue(task);
-            });
-        }
-        if (plan.immediateTasks[group.id]) {
-            immediateTaskPromises.push(group.executeImmediately(plan.immediateTasks[group.id]));
-        }
-    }
-
-    console.log("--- Execution Results ---");
-    // Get the real queue length from the Group object, not the static plan payload
-    console.log("Alpha taskQueue length:", alpha.taskQueue.length);
-
-    // Let the event loop breathe a tick so immediate tasks can establish their event listeners
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    console.log("Simulating KIA event with >0.5 casualties...");
-
-    const event: UnitKilledEvent = { groupId: alpha.id, type: "UNIT_KILLED", unitId: "unitA_1_id" };
-    const planEvent: KiaPlanEvent = { type: "KIA" }; // Assuming your sandbox mapper needs this
-
-    // Fire the event! If an active task is listening for it, it will react.
-    eventDispatcher.fireGroupEvent(event);
-
-    // Pass the domain event to your sandbox to generate a reactionary plan
-    const newPlan = sandbox.handlePlanEvent(alpha, planEvent);
-
-    if (newPlan) {
-        console.log("New plan received from sandbox:", newPlan);
-
-        // 1. Wipe current operations if the sandbox demands it
-        if (newPlan.clearGroupTasks[alpha.id]) {
-            alpha.clearTasks(); // Wipes activeTask and empties taskQueue
-        }
-        if (newPlan.clearGroupTasks[bravo.id]) {
-            bravo.clearTasks();
-        }
-
-        // 2. Fire immediate override tasks (e.g., Retreat or Report)
-        if (newPlan.immediateTasks[alpha.id]) {
-            // Note: Not awaiting this so the test can finish, unless it's an instant resolve like Report
-            alpha.executeImmediately(newPlan.immediateTasks[alpha.id]);
-        }
-
-        // 3. Queue new tasks
-        // We DO NOT call executeNext() manually. `addTaskToQueue` will automatically kickstart the queue.
-        if (newPlan.queuedTasks && newPlan.queuedTasks[alpha.id]) {
-            newPlan.queuedTasks[alpha.id].forEach(task => alpha.addTaskToQueue(task));
-        }
-
-    } else {
-        console.log("New plan is null (no reaction triggered)");
-    }
+    return { army, alpha, bravo };
 }
 
-test().catch(console.error);
+function getTaskNameForGroup(plan: any, groupId: string): string | undefined {
+    return plan?.immediateTasks?.[groupId]?.name;
+}
+
+async function testIdleGroupReaction() {
+    const { army, alpha } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+groups["Alpha"]
+  .on(Event.KIA, (event, group) => {
+    group.executeImmediately(new Report("group idle reaction", "group_idle_kia"));
+  });
+`;
+    const plan = await sandbox.makePlan(army, code);
+    assert.ok(plan.groupReactions[alpha.id]?.KIA, "KIA should be persisted as group reaction");
+
+    const reactionPlan = sandbox.handlePlanEvent(alpha, { type: "KIA" });
+    assert.ok(reactionPlan, "Group-level reaction should execute without current task");
+    assert.equal(getTaskNameForGroup(reactionPlan, alpha.id), "group_idle_kia");
+    sandbox.dispose();
+}
+
+async function testTaskOverridesGroupReaction() {
+    const { army, alpha } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+groups["Alpha"]
+  .on(Event.KIA, (event, group) => {
+    group.executeImmediately(new Report("group reaction", "group_kia"));
+  })
+  .executeImmediately(
+    new Wait(new SyncPoint("never"), "hold_position")
+      .on(Event.KIA, (event, group) => {
+        group.executeImmediately(new Report("task reaction", "task_kia"));
+      })
+  );
+`;
+    const initialPlan = await sandbox.makePlan(army, code);
+    await alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reactionPlan = sandbox.handlePlanEvent(alpha, { type: "KIA" });
+    assert.ok(reactionPlan, "Task-level reaction should execute");
+    assert.equal(getTaskNameForGroup(reactionPlan, alpha.id), "task_kia");
+    sandbox.dispose();
+}
+
+async function testGroupFallbackWhenTaskHasNoEventReaction() {
+    const { army, alpha } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+groups["Alpha"]
+  .on(Event.KIA, (event, group) => {
+    group.executeImmediately(new Report("group fallback", "group_fallback_kia"));
+  })
+  .executeImmediately(
+    new Wait(new SyncPoint("never"), "hold_position")
+      .on(Event.ENEMY_CONTACT, (event, group) => {
+        group.executeImmediately(new Report("task contact", "task_contact"));
+      })
+  );
+`;
+    const initialPlan = await sandbox.makePlan(army, code);
+    await alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reactionPlan = sandbox.handlePlanEvent(alpha, { type: "KIA" });
+    assert.ok(reactionPlan, "Group reaction should still execute when task has no matching callback");
+    assert.equal(getTaskNameForGroup(reactionPlan, alpha.id), "group_fallback_kia");
+    sandbox.dispose();
+}
+
+async function test() {
+    await testIdleGroupReaction();
+    await testTaskOverridesGroupReaction();
+    await testGroupFallbackWhenTaskHasNoEventReaction();
+    console.log("All sandbox reaction tests passed.");
+}
+
+test().catch((err) => {
+    console.error("Sandbox reaction tests failed:", err);
+    process.exit(1);
+});
