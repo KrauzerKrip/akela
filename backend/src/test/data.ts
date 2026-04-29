@@ -5,16 +5,17 @@ import * as fs from "fs";
 import * as path from "path";
 import * as dotenv from 'dotenv'
 import { startServer } from "../server";
+import { Session as AkelaSession } from "../session";
 
 dotenv.config()
 
 async function run() {
     const armaConnector = new ArmaConnector();
-    const app = startServer(armaConnector, 3000);
+    const app = startServer(armaConnector, { port: 3000 });
     const armyComposer = new ArmyComposer(armaConnector, armaConnector);
 
     console.log("Connecting to Arma and fetching BLUFOR army...");
-    const army = await armyComposer.composeArmyForSession("BLUFOR");
+    const army = await armyComposer.composeArmyForSession(new AkelaSession("BLUFOR"), "BLUFOR");
 
     // Group positions must be fetched for the state
     for (const group of army.getGroups()) {

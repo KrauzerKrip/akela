@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import type { JSX } from "react";
 import { fetchActiveSession, fetchSessionEvents, fetchSessionManifest, fetchSessionTraces, fetchSessions } from "../../api/client";
 import { CommanderConsole } from "../console/commander-console";
@@ -31,23 +31,23 @@ export function WarRoomShell(): JSX.Element {
   usePlaybackClock();
   useLiveEvents(mode === "live");
 
+  const refreshSessions = useCallback(async () => {
+    const [sessionList, activeSession] = await Promise.all([fetchSessions(), fetchActiveSession()]);
+    setSessions(sessionList);
+    setActiveSession(activeSession);
+
+    if (activeSession?.id) {
+      selectSession(activeSession.id);
+    } else if (sessionList[0]?.id) {
+      selectSession(sessionList[0].id);
+    }
+  }, [selectSession, setActiveSession, setSessions]);
+
   useEffect(() => {
-    const loadSessions = async () => {
-      const [sessionList, activeSession] = await Promise.all([fetchSessions(), fetchActiveSession()]);
-      setSessions(sessionList);
-      setActiveSession(activeSession);
-
-      if (activeSession?.id) {
-        selectSession(activeSession.id);
-      } else if (sessionList[0]?.id) {
-        selectSession(sessionList[0].id);
-      }
-    };
-
-    loadSessions().catch((error) => {
+    refreshSessions().catch((error) => {
       console.error("Failed to load sessions", error);
     });
-  }, [selectSession, setActiveSession, setSessions]);
+  }, [refreshSessions]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -75,7 +75,7 @@ export function WarRoomShell(): JSX.Element {
   return (
     <div className="grid h-screen min-h-screen grid-rows-[1fr_auto] bg-background text-foreground">
       <ResizablePanels
-        left={<SessionSidebar />}
+        left={<SessionSidebar onSessionInitialized={refreshSessions} />}
         right={
           <div className="grid h-full min-h-0 grid-cols-[2fr_1fr]">
             <WarMap projectedState={projected} manifest={manifest} />

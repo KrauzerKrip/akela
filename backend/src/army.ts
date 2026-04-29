@@ -2,6 +2,7 @@ import { BaseEvent } from "./event";
 import { Point, Point3D } from "./geography";
 import { v4 as uuidv4 } from 'uuid';
 import { Session as AkelaSession } from "./session";
+import type { CompositionProgressLogger } from "./composition_progress";
 
 export interface GroupEvent extends BaseEvent {
     groupId: string;
@@ -887,26 +888,90 @@ export class Army {
 export class ArmyComposer {
     private readonly gameExecutor: GameExecutor;
     private readonly gameEventDispatcher: GameEventDispatcher;
+    private readonly progressLogger: CompositionProgressLogger | null;
 
-    constructor(gameExecutor: GameExecutor, gameEventDispatcher: GameEventDispatcher) {
+    constructor(
+        gameExecutor: GameExecutor,
+        gameEventDispatcher: GameEventDispatcher,
+        progressLogger: CompositionProgressLogger | null = null
+    ) {
         this.gameExecutor = gameExecutor;
         this.gameEventDispatcher = gameEventDispatcher;
+        this.progressLogger = progressLogger;
     }
 
     public async composeArmyForSession(session: AkelaSession, side: string): Promise<Army> {
         const army = new Army(side);
+        this.progressLogger?.log({
+            phase: "STARTED",
+            message: `Starting army composition for ${side}.`
+        });
         console.log("getting groups");
         const groupBuilders = await this.gameExecutor.getGroupBuilders(side);
-        console.log("got gruops ");
+        console.log("got groups ");
+        this.progressLogger?.log({
+            phase: "STARTED",
+            message: `Discovered ${groupBuilders.length} groups for ${side}.`,
+            index: 0,
+            total: groupBuilders.length
+        });
 
-        for (const groupBuilder of groupBuilders) {
+        for (let groupIndex = 0; groupIndex < groupBuilders.length; groupIndex += 1) {
+            const groupBuilder = groupBuilders[groupIndex];
             const group = groupBuilder.buildForSession(session);
+            this.progressLogger?.log({
+                phase: "GROUP",
+                message: `Composing group ${group.getName()}.`,
+                groupId: group.id,
+                groupName: group.getName(),
+                index: groupIndex + 1,
+                total: groupBuilders.length
+            });
+
             const units = await this.gameExecutor.getGroupUnits(group);
-            units.forEach(u => group.addUnit(u));
+            units.forEach((unit, unitIndex) => {
+                group.addUnit(unit);
+                this.progressLogger?.log({
+                    phase: "UNIT",
+                    message: `Added unit ${unit.getName()} to ${group.getName()}.`,
+                    groupId: group.id,
+                    groupName: group.getName(),
+                    unitId: unit.id,
+                    unitName: unit.getName(),
+                    index: unitIndex + 1,
+                    total: units.length
+                });
+                this.progressLogger?.log({
+                    phase: "LOADOUT",
+                    message: `Loaded equipment for ${unit.getName()}.`,
+                    groupId: group.id,
+                    groupName: group.getName(),
+                    unitId: unit.id,
+                    unitName: unit.getName(),
+                    index: unitIndex + 1,
+                    total: units.length
+                });
+            });
+
             const waypoints = await this.gameExecutor.getWaypoints(group);
             waypoints.forEach(wp => group.addWaypointInEnd(wp));
+            this.progressLogger?.log({
+                phase: "WAYPOINTS",
+                message: `Attached ${waypoints.length} waypoints for ${group.getName()}.`,
+                groupId: group.id,
+                groupName: group.getName(),
+                total: waypoints.length
+            });
+
             const vehicles = await this.gameExecutor.getGroupAssignedVehicles(group);
             vehicles.forEach(v => group.addVehicle(v));
+            this.progressLogger?.log({
+                phase: "VEHICLES",
+                message: `Attached ${vehicles.length} vehicles for ${group.getName()}.`,
+                groupId: group.id,
+                groupName: group.getName(),
+                total: vehicles.length
+            });
 
             this.gameExecutor.addGroupEventHandlers(group);
             group.setupEventHandlers(this.gameEventDispatcher);
@@ -914,6 +979,12 @@ export class ArmyComposer {
             army.addGroup(group);
         }
 
+        this.progressLogger?.log({
+            phase: "COMPLETED",
+            message: `Army composition complete with ${army.getGroups().length} groups.`,
+            index: army.getGroups().length,
+            total: groupBuilders.length
+        });
         return army;
     }
 }

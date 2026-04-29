@@ -3,6 +3,8 @@ import { useSelectedSessionEvents, useWarRoomStore } from "../../store/war-room-
 import { Badge } from "../ui/badge";
 import { formatClock } from "../../lib/utils";
 
+const EMPTY_TRACES: Array<{ id: string; title: string; detail: string; t: number }> = [];
+
 function toYamlLike(event: { type: string; source: string; t: number; payload: Record<string, unknown> }): string {
   const lines = [`type: ${event.type}`, `source: ${event.source}`, `t: ${new Date(event.t).toISOString()}`];
   for (const [key, value] of Object.entries(event.payload)) {
@@ -17,13 +19,17 @@ export function MindFeed(): JSX.Element {
   const selectedSessionId = useWarRoomStore((state) => state.selectedSessionId);
   const currentTime = useWarRoomStore((state) => state.currentTime);
   const traces = useWarRoomStore((state) =>
-    selectedSessionId ? state.tracesBySession[selectedSessionId] ?? [] : []
+    selectedSessionId ? state.tracesBySession[selectedSessionId] ?? EMPTY_TRACES : EMPTY_TRACES
   );
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const feedItems = useMemo(
     () =>
-      events.filter((event) => ["STATE_TICK", "TACTICAL_REPORT", "AGENT_RESPONSE", "USER_COMMAND", "NEW_PLAN"].includes(event.type)),
+      events.filter((event) =>
+        ["STATE_TICK", "TACTICAL_REPORT", "AGENT_RESPONSE", "USER_COMMAND", "NEW_PLAN", "COMPOSITION_PROGRESS"].includes(
+          event.type
+        )
+      ),
     [events]
   );
 

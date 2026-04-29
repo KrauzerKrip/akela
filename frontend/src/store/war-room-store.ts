@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { AkelaEvent, SessionManifest, SessionMeta, SessionTrace } from "../types/events";
 
 type PlayMode = "live" | "replay";
+const EMPTY_EVENTS: AkelaEvent[] = [];
 
 interface WarRoomState {
   sessions: SessionMeta[];
@@ -112,6 +113,6 @@ export const useWarRoomStore = create<WarRoomState>((set, get) => ({
 
 export function useSelectedSessionEvents(): AkelaEvent[] {
   return useWarRoomStore((state) =>
-    state.selectedSessionId ? state.eventsBySession[state.selectedSessionId] ?? [] : []
+    state.selectedSessionId ? state.eventsBySession[state.selectedSessionId] ?? EMPTY_EVENTS : EMPTY_EVENTS
   );
 }

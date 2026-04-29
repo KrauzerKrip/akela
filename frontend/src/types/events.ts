@@ -93,3 +93,46 @@ export interface SessionTrace {
   title: string;
   detail: string;
 }
+
+export type CompositionPhase =
+  | "STARTED"
+  | "GROUP"
+  | "UNIT"
+  | "LOADOUT"
+  | "WAYPOINTS"
+  | "VEHICLES"
+  | "COMPLETED"
+  | "FAILED";
+
+export interface CompositionProgressPayload {
+  phase: CompositionPhase;
+  message: string;
+  index?: number;
+  total?: number;
+  groupId?: string;
+  groupName?: string;
+  unitId?: string;
+  unitName?: string;
+}
+
+export interface SessionInitializePayload {
+  intel: {
+    photos?: string[];
+    observations?: string[];
+  };
+  area: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    world?: string;
+  };
+  missionName?: string;
+  worldName?: string;
+  side?: string;
+}
+
+export interface SessionInitializeResponse {
+  status: string;
+  session: SessionMeta;
+}

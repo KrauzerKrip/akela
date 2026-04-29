@@ -1,4 +1,11 @@
-import type { AkelaEvent, SessionManifest, SessionMeta, SessionTrace } from "../types/events";
+import type {
+  AkelaEvent,
+  SessionInitializePayload,
+  SessionInitializeResponse,
+  SessionManifest,
+  SessionMeta,
+  SessionTrace,
+} from "../types/events";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
 
@@ -31,10 +38,14 @@ export async function fetchSessions(): Promise<SessionMeta[]> {
 
 export async function fetchActiveSession(): Promise<SessionMeta | null> {
   const response = await fetch(buildApiUrl("/api/sessions/active"));
+  const responseText = await response.text();
   if (!response.ok) {
     throw new Error("Failed to load active session.");
   }
-  return (await response.json()) as SessionMeta | null;
+  if (responseText.length === 0) {
+    return null;
+  }
+  return JSON.parse(responseText) as SessionMeta | null;
 }
 
 export async function fetchSessionEvents(sessionId: string): Promise<AkelaEvent[]> {
@@ -80,6 +91,38 @@ export async function sendIntervention(
   if (!response.ok) {
     throw new Error("Failed to send intervention.");
   }
+}
+
+export class SessionInitializeError extends Error {
+  public readonly statusCode: number;
+
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+export async function initializeSession(payload: SessionInitializePayload): Promise<SessionInitializeResponse> {
+  const response = await fetch(buildApiUrl("/api/sessions/initialize"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let message = "Failed to initialize session.";
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body.error) {
+        message = body.error;
+      }
+    } catch {
+      // Keep fallback error message.
+    }
+    throw new SessionInitializeError(message, response.status);
+  }
+
+  return (await response.json()) as SessionInitializeResponse;
 }
 
 export function getMapCropUrl(
