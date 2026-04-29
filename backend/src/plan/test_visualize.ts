@@ -8,7 +8,7 @@ import { Session } from "../session";
 import { GameMapArea, Point, Point3D } from "../geography";
 
 class DummyExecutor implements GameExecutor {
-    getGroups(side: string): Promise<Group[]> { throw new Error("Method not implemented."); }
+    getGroupBuilders(side: string): Promise<Group[]> { throw new Error("Method not implemented."); }
     getGroupUnits(group: Group): Promise<Unit[]> { throw new Error("Method not implemented."); }
     getUnitLoadout(unit: Unit): Promise<Loadout> { throw new Error("Method not implemented."); }
     getWaypoints(group: Group): Promise<Waypoint[]> { throw new Error("Method not implemented."); }

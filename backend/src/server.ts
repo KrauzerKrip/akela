@@ -5,9 +5,9 @@ import path from "path";
 import { promisify } from "util";
 import { exec } from "child_process";
 import { createHash } from "crypto";
-import { eventHub } from "./event_hub";
+import { eventHub } from "./event";
 import { runtimeState } from "./runtime_state";
-import { GameDomainEvent, withEnvelope } from "./events";
+import { BaseEvent, GameDomainEvent, withEnvelope } from "./event";
 
 const execAsync = promisify(exec);
 
@@ -33,7 +33,7 @@ export function sendArmaRequest(commands: any[]): Promise<any> {
 export function startServer(armaConnector: ArmaConnector, port = 3000) {
     const wsClients = new Set<any>();
 
-    const unsubscribeEventHub = eventHub.subscribe((event) => {
+    const unsubscribeEventHub = eventHub.subscribe((event: BaseEvent) => {
         const payload = JSON.stringify(event);
         for (const client of wsClients) {
             try {
@@ -232,17 +232,8 @@ export function startServer(armaConnector: ArmaConnector, port = 3000) {
                     message: body.message,
                     sessionId: params.id
                 });
-                activeSession.appendEventLog(userCommandEvent);
                 eventHub.publish(userCommandEvent as any);
 
-                const interventionEvent = withEnvelope({
-                    source: "USER",
-                    type: "INTERVENTION_REQUESTED",
-                    targetAgent: body.targetAgent,
-                    message: body.message,
-                    sessionId: params.id
-                });
-                eventHub.publish(interventionEvent as any);
                 runtimeState.dispatchIntervention({
                     message: body.message,
                     targetAgent: body.targetAgent,

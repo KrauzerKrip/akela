@@ -1,11 +1,12 @@
 import type { TacticalGroupEvent } from "./army";
+import { Point, Point3D } from "./geography";
 
 export type EventSource = "GAME" | "AI" | "USER" | "SYSTEM";
 
 export interface BaseEvent {
     source: EventSource;
     type: string;
-    t: number;
+    timestamp?: number;
     sessionId?: string;
 }
 
@@ -13,12 +14,12 @@ export interface StateTickGroup {
     id: string;
     groupId: string;
     name: string;
-    position: [number, number];
+    position: Point3D;
     task: unknown;
 }
 
 export interface StateTickEnemy {
-    position: [number, number, number];
+    position: Point3D;
     kind: string;
 }
 
@@ -32,13 +33,6 @@ export interface StateTickEvent extends BaseEvent {
 export interface UserCommandEvent extends BaseEvent {
     source: "USER";
     type: "USER_COMMAND";
-    targetAgent: string;
-    message: string;
-}
-
-export interface InterventionRequestedEvent extends BaseEvent {
-    source: "USER";
-    type: "INTERVENTION_REQUESTED";
     targetAgent: string;
     message: string;
 }
@@ -67,15 +61,6 @@ export interface GameDomainEvent extends BaseEvent {
     payload: TacticalGroupEvent | Record<string, unknown>;
 }
 
-export type AkelaEvent =
-    | StateTickEvent
-    | UserCommandEvent
-    | InterventionRequestedEvent
-    | AgentResponseEvent
-    | NewPlanEvent
-    | LlmDecisionStartEvent
-    | GameDomainEvent;
-
 export function withEnvelope<T extends Omit<BaseEvent, "t">>(
     event: T,
     timestamp = Date.now()
@@ -85,4 +70,28 @@ export function withEnvelope<T extends Omit<BaseEvent, "t">>(
         t: timestamp
     };
 }
+
+
+
+
+import { EventEmitter } from "events";
+
+type EventListener = (event: BaseEvent) => void;
+
+class EventHub {
+    private readonly emitter = new EventEmitter();
+
+    public publish(event: BaseEvent): void {
+        this.emitter.emit("event", event);
+    }
+
+    public subscribe(listener: EventListener): () => void {
+        this.emitter.on("event", listener);
+        return () => {
+            this.emitter.off("event", listener);
+        };
+    }
+}
+
+export const eventHub = new EventHub();
 

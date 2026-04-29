@@ -1,20 +1,21 @@
+import { BaseEvent } from "./event";
 import { Point, Point3D } from "./geography";
 import { v4 as uuidv4 } from 'uuid';
+import { Session as AkelaSession } from "./session";
 
-export interface Event {
-    type: string;
-}
-
-export interface GroupEvent extends Event {
+export interface GroupEvent extends BaseEvent {
     groupId: string;
 }
 
 export interface ReportGroupEvent extends GroupEvent {
     type: "REPORT";
     message: string;
+    source: "SYSTEM"
 }
 
-export interface EngineGroupEvent extends GroupEvent { }
+export interface EngineGroupEvent extends GroupEvent {
+    source: "GAME";
+}
 
 export interface UnitKilledEvent extends EngineGroupEvent {
     type: "UNIT_KILLED";
@@ -75,6 +76,8 @@ export interface EmbarkingCompleteEvent extends EngineGroupEvent {
 
 export interface TacticalGroupEvent extends GroupEvent {
     groupId: string;
+    // because it's techically an event that is fired by the system based on events fired by the game engine
+    source: "SYSTEM";
 }
 
 export interface EnemyContactEvent extends TacticalGroupEvent {
@@ -111,7 +114,7 @@ export interface Signal {
 }
 
 export interface GameExecutor {
-    getGroups(side: string): Promise<Group[]>;
+    getGroupBuilders(side: string): Promise<GroupBuilder[]>;
     getGroupUnits(group: Group): Promise<Unit[]>;
     getUnitLoadout(unit: Unit): Promise<Loadout>;
     addWaypoint(group: Group, waypoint: Waypoint): Promise<void>;
@@ -305,8 +308,8 @@ export class Push extends Task {
 
         // Return a Promise that resolves when the domain event fires
         return new Promise((resolve) => {
-            const completionListener = (event: EngineGroupEvent) => {
-                if (event.type === "WAYPOINT_COMPLETE") {
+            const completionListener = (event: GroupEvent) => {
+                if (event.source === "GAME" && event.type === "WAYPOINT_COMPLETE") {
                     const wpEvent = event as WaypointCompleteEvent;
 
                     // TODO: Add a timeout or fallback in case Arma AI breaks
@@ -368,8 +371,8 @@ export class Assault extends Task {
 
         // Return a Promise that resolves when the domain event fires
         return new Promise((resolve) => {
-            const completionListener = (event: EngineGroupEvent) => {
-                if (event.type === "WAYPOINT_COMPLETE") {
+            const completionListener = (event: GroupEvent) => {
+                if (event.source === "GAME" && event.type === "WAYPOINT_COMPLETE") {
                     const wpEvent = event as WaypointCompleteEvent;
 
                     // TODO: Add a timeout or fallback in case Arma AI breaks
@@ -427,8 +430,8 @@ export class Retreat extends Task {
 
         // Return a Promise that resolves when the domain event fires
         return new Promise((resolve) => {
-            const completionListener = (event: EngineGroupEvent) => {
-                if (event.type === "WAYPOINT_COMPLETE") {
+            const completionListener = (event: GroupEvent) => {
+                if (event.source === "GAME" && event.type === "WAYPOINT_COMPLETE") {
                     const wpEvent = event as WaypointCompleteEvent;
 
                     // TODO: Add a timeout or fallback in case Arma AI breaks
@@ -470,7 +473,7 @@ export class Report extends Task {
 
     public async execute(group: Group, executor: GameExecutor): Promise<void> {
         console.log(`[REPORT] ${group.getName()}: ${this.message}`);
-        const event: ReportGroupEvent = { groupId: group.id, message: this.message, type: "REPORT" };
+        const event: ReportGroupEvent = { source: "SYSTEM", groupId: group.id, message: this.message, type: "REPORT" };
         group.emitDomainEvent(event);
     }
 }
@@ -525,8 +528,8 @@ export class WaitTask extends Task {
 
         console.log(`[WAIT] ${group.getName()}: waiting now`);
         return new Promise((resolve) => {
-            const completionListener = (event: EngineGroupEvent) => {
-                if (event.type === "SIGNAL") {
+            const completionListener = (event: GroupEvent) => {
+                if (event.source === "GAME" && event.type === "SIGNAL") {
                     const signalEvent = event as SignalEvent;
 
                     if (signalEvent.signal.id === this.signalToWaitFor.id) {
@@ -573,8 +576,8 @@ export class Embark extends Task {
 
         // Return a Promise that resolves when the domain event fires
         return new Promise((resolve) => {
-            const completionListener = (event: EngineGroupEvent) => {
-                if (event.type === "EmbarkingCompleteEvent") {
+            const completionListener = (event: GroupEvent) => {
+                if (event.source === "GAME" && event.type === "EmbarkingCompleteEvent") {
                     const ecEvent = event as EmbarkingCompleteEvent;
 
                     if (ecEvent.vehicleId === this.vehicle.id && ecEvent.status === "Complete") {
@@ -608,8 +611,26 @@ export type GroupEventListener = (event: GroupEvent) => void;
 
 export type SignalListener = (signal: Signal) => void;
 
+
+export class GroupBuilder {
+    private readonly id: string;
+    private readonly name: string;
+    private readonly executor: GameExecutor;
+
+    constructor(id: string, name: string, executor: GameExecutor) {
+        this.id = id;
+        this.name = name;
+        this.executor = executor;
+    }
+
+    public buildForSession(session: AkelaSession): Group {
+        return new Group(this.id, this.name, session, this.executor);
+    }
+}
+
 export class Group {
     public readonly id: string;
+    private readonly session: AkelaSession;
     private name: string;
     private units: Unit[];
     private unitsAlive: Record<string, boolean>;
@@ -624,9 +645,10 @@ export class Group {
     private executor: GameExecutor;
     private position: Point3D | null;
 
-    constructor(id: string, name: string, executor: GameExecutor) {
+    constructor(id: string, name: string, session: AkelaSession, executor: GameExecutor) {
         this.id = id;
         this.name = name;
+        this.session = session;
         this.units = [];
         this.unitsAlive = {};
         this.unitById = {};
@@ -690,7 +712,13 @@ export class Group {
         } as SignalEvent);
     }
 
+    /**
+     * timestamp and session id are added to the event by this method
+     * @param event 
+     */
     public emitDomainEvent(event: GroupEvent) {
+        event.timestamp = Date.now();
+        event.sessionId = this.session.getId();
         for (const listener of this.listeners) {
             listener(event);
         }
@@ -865,13 +893,14 @@ export class ArmyComposer {
         this.gameEventDispatcher = gameEventDispatcher;
     }
 
-    public async composeArmyOfSide(side: string): Promise<Army> {
+    public async composeArmyForSession(session: AkelaSession, side: string): Promise<Army> {
         const army = new Army(side);
         console.log("getting groups");
-        const groups = await this.gameExecutor.getGroups(side);
+        const groupBuilders = await this.gameExecutor.getGroupBuilders(side);
         console.log("got gruops ");
 
-        for (const group of groups) {
+        for (const groupBuilder of groupBuilders) {
+            const group = groupBuilder.buildForSession(session);
             const units = await this.gameExecutor.getGroupUnits(group);
             units.forEach(u => group.addUnit(u));
             const waypoints = await this.gameExecutor.getWaypoints(group);

@@ -3,7 +3,7 @@ import { Army, Group, GameExecutor, Waypoint, Unit, Loadout } from "../army";
 import { strict as assert } from "assert";
 
 class DummyExecutor implements GameExecutor {
-    getGroups(side: string): Promise<Group[]> {
+    getGroupBuilders(side: string): Promise<Group[]> {
         throw new Error("Method not implemented.");
     }
     getGroupUnits(group: Group): Promise<Unit[]> {

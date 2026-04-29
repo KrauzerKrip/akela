@@ -16,9 +16,9 @@ import { SimpleIntelPromptFormatter, SimplePlanPromptFormatter, SimpleExecutionP
 import { ArmyCombatMonitor } from "./combat";
 import { createSitrep } from "./sitrep";
 import { PlanVisualizer } from "./plan/visualization";
-import { eventHub } from "./event_hub";
+import { eventHub } from "./event";
 import { runtimeState } from "./runtime_state";
-import { withEnvelope } from "./events";
+import { withEnvelope } from "./event";
 
 const args = process.argv.slice(2);
 const { values } = parseArgs({
@@ -76,13 +76,6 @@ if (!dbUrl) {
 const sessionService = new DatabaseSessionService(dbUrl);
 await sessionService.init();
 
-const armyComposer = new ArmyComposer(armaConnector, armaConnector);
-console.log("Trying to compose...");
-const army = await armyComposer.composeArmyOfSide("BLUFOR");
-console.log("Composed army with", army.getGroups().length, "groups!");
-
-const armyCombatMonitor = ArmyCombatMonitor.fromArmy(army);
-
 // Initialize Session
 const sessionDir = path.join(process.cwd(), "..", ".data", "sessions");
 runtimeState.setSessionsDir(sessionDir);
@@ -91,6 +84,14 @@ const session = new Session(sessionDir);
 session.initialize();
 runtimeState.setActiveSession(session);
 console.log(`Session initialized at ${session.getDirectory()}`);
+
+const armyComposer = new ArmyComposer(armaConnector, armaConnector);
+console.log("Trying to compose...");
+const army = await armyComposer.composeArmyForSession(session, "BLUFOR");
+console.log("Composed army with", army.getGroups().length, "groups!");
+
+const armyCombatMonitor = ArmyCombatMonitor.fromArmy(army);
+
 
 const manifest: any = {
     intelInput: paramsInputData
@@ -104,7 +105,6 @@ for (const g of groups) {
 
 // Subscriptions for JSONL logging
 const appendAndBroadcast = (event: Record<string, any>) => {
-    session.appendEventLog(event);
     eventHub.publish(withEnvelope({
         source: event.type === "USER_COMMAND" ? "USER" : event.type === "AGENT_RESPONSE" || event.type === "NEW_PLAN" || event.type === "LLM_DECISION_START" ? "AI" : "GAME",
         ...(event as any),
@@ -120,6 +120,10 @@ groups.forEach(g => {
     g.subscribe(event => {
         appendAndBroadcast(event as any);
     });
+});
+
+eventHub.subscribe(event => {
+    session.appendEventLog(event);
 });
 
 let isTicking = false;

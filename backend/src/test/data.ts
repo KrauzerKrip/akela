@@ -14,7 +14,7 @@ async function run() {
     const armyComposer = new ArmyComposer(armaConnector, armaConnector);
 
     console.log("Connecting to Arma and fetching BLUFOR army...");
-    const army = await armyComposer.composeArmyOfSide("BLUFOR");
+    const army = await armyComposer.composeArmyForSession("BLUFOR");
 
     // Group positions must be fetched for the state
     for (const group of army.getGroups()) {

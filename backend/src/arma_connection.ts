@@ -1,4 +1,4 @@
-import { Group, Task, Unit, Waypoint, GameEventDispatcher, Event, EngineGroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle, EmbarkingCompleteEvent } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, BaseEvent, EngineGroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle, EmbarkingCompleteEvent, GroupBuilder } from "./army";
 import { GameExecutor } from "./army";
 import { Point, Point3D } from "./geography";
 import { sendArmaRequest } from "./server";
@@ -281,7 +281,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         });
     }
 
-    public async getGroups(side: string): Promise<Group[]> {
+    public async getGroupBuilders(side: string): Promise<GroupBuilder[]> {
         const data = await this.getArmaGroups(side);
         return data.map((groupData: string[]) => {
             const netId = groupData[0];
@@ -292,7 +292,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
                 id = uuidv4();
                 this.registerGroup(id, netId);
             }
-            return new Group(id, name, this);
+            return new GroupBuilder(id, name, this);
         });
     }
 

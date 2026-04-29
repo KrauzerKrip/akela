@@ -34,7 +34,7 @@ export function serializeArmy(army: Army): any {
 }
 
 export class MockGameExecutor implements GameExecutor {
-    async getGroups(side: string) { return []; }
+    async getGroupBuilders(side: string) { return []; }
     async getGroupUnits(group: Group) { return []; }
     async getUnitLoadout(unit: Unit): Promise<Loadout> { return unit.loadout; }
     async addWaypoint(group: Group, waypoint: Waypoint) { }

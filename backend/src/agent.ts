@@ -18,8 +18,8 @@ import { Session } from './session';
 import * as util from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import { runtimeState, InterventionCommand } from './runtime_state';
-import { eventHub } from './event_hub';
-import { withEnvelope } from './events';
+import { eventHub } from './event';
+import { withEnvelope } from './event';
 
 export class Image {
     private readonly path: string;
@@ -561,11 +561,6 @@ export class ExecutionAgent {
         });
 
         const decisionId = uuidv4();
-        this.session.appendEventLog({
-            type: "LLM_DECISION_START",
-            decisionId: decisionId,
-            trigger: "Initial Execution"
-        });
         eventHub.publish(withEnvelope({
             source: "AI",
             type: "LLM_DECISION_START",
@@ -619,15 +614,24 @@ export class ExecutionAgent {
         try {
             while (true) {
                 currentPlanResetMode = "preserveReactions";
-                let nextSignal: TacticalReportEvent | InterventionCommand;
+                let nextIntervention: InterventionCommand | undefined = undefined;
+                let nextReport: TacticalReportEvent | undefined = undefined;
 
                 if (interventionQueue.length > 0) {
-                    nextSignal = interventionQueue.shift()!;
+                    nextIntervention = interventionQueue.shift()!;
                 } else if (reportQueue.length > 0) {
-                    nextSignal = reportQueue.shift()!;
+                    nextReport = reportQueue.shift()!;
                 } else {
-                    nextSignal = await new Promise<TacticalReportEvent | InterventionCommand>(resolve => {
-                        this.waitForSignalResolver = resolve;
+                    // Wait for whichever comes first: intervention or report
+                    await new Promise<void>(resolve => {
+                        this.waitForSignalResolver = (signal) => {
+                            if ((signal as InterventionCommand).message !== undefined && (signal as InterventionCommand).targetAgent !== undefined) {
+                                nextIntervention = signal as InterventionCommand;
+                            } else {
+                                nextReport = signal as TacticalReportEvent;
+                            }
+                            resolve();
+                        };
                     });
                 }
 
@@ -636,29 +640,27 @@ export class ExecutionAgent {
                 let promptObj: any;
                 let triggerText: string;
 
-                if ("sessionId" in nextSignal) {
-                    const intervention = nextSignal;
+                if (nextIntervention) {
                     const interventionPrompt = await this.promptFormatter.formatInterventionPrompt(
                         sitreps,
-                        intervention.message,
-                        intervention.targetAgent
+                        nextIntervention.message,
+                        nextIntervention.targetAgent
                     );
                     userPrompt = interventionPrompt.user;
                     promptObj = interventionPrompt.prompt;
-                    triggerText = `Commander intervention: ${intervention.message}`;
-                } else {
-                    const reportPrompt = await this.promptFormatter.formatReportPrompt(sitreps, nextSignal.message);
+                    triggerText = `Commander intervention: ${nextIntervention.message}`;
+                } else if (nextReport) {
+                    const reportPrompt = await this.promptFormatter.formatReportPrompt(sitreps, nextReport.message);
                     userPrompt = reportPrompt.user;
                     promptObj = reportPrompt.prompt;
-                    triggerText = nextSignal.message;
+                    triggerText = nextReport.message;
+                } else {
+                    // This should never be reached since one will have been set.
+                    throw new Error("No signal received for agent step.");
                 }
+     
 
                 const decisionId = uuidv4();
-                this.session.appendEventLog({
-                    type: "LLM_DECISION_START",
-                    decisionId: decisionId,
-                    trigger: triggerText
-                });
                 eventHub.publish(withEnvelope({
                     source: "AI",
                     type: "LLM_DECISION_START",
