@@ -25,6 +25,9 @@ interface WarMapProps {
 const MAX_CROP_SPAN_METERS = 10_000;
 const MAX_REASONABLE_COORDINATE = 1_000_000;
 const CROP_PADDING_METERS = 0;//2_000;
+const FIT_PADDING_PX = 24;
+const CTRL_WHEEL_ZOOM_STEP = 0.5;
+const ZOOM_LEVEL_RANGE = 8;
 
 const PROJECTION = new Projection({
   code: "AKELA-CARTESIAN",
@@ -59,6 +62,55 @@ const ARROW_STYLE = new Style({
 });
 
 type CropBox = { x1: number; y1: number; x2: number; y2: number };
+type CropExtent = [number, number, number, number];
+
+function cropToExtent(crop: CropBox): CropExtent {
+  return [crop.x1, crop.y1, crop.x2, crop.y2];
+}
+
+function constrainViewToCrop(map: Map, crop: CropBox, resetView: boolean): void {
+  const view = map.getView();
+  const size = map.getSize();
+  const extent = cropToExtent(crop);
+
+  if (size) {
+    const fitWidth = Math.max(1, size[0] - FIT_PADDING_PX * 2);
+    const fitHeight = Math.max(1, size[1] - FIT_PADDING_PX * 2);
+    const fitResolution = Math.max((crop.x2 - crop.x1) / fitWidth, (crop.y2 - crop.y1) / fitHeight);
+    const fitZoom = view.getZoomForResolution(fitResolution);
+
+    if (fitZoom !== undefined && Number.isFinite(fitZoom)) {
+      const maxZoom = fitZoom + ZOOM_LEVEL_RANGE;
+      const currentZoom = view.getZoom();
+
+      view.setMinZoom(fitZoom);
+      view.setMaxZoom(maxZoom);
+
+      if (resetView || currentZoom == null || currentZoom < fitZoom) {
+        view.setZoom(fitZoom);
+      } else if (currentZoom > maxZoom) {
+        view.setZoom(maxZoom);
+      }
+    }
+  }
+
+  if (resetView) {
+    view.setCenter([(extent[0] + extent[2]) / 2, (extent[1] + extent[3]) / 2]);
+  }
+}
+
+function applyCtrlWheelZoom(view: View, deltaY: number): void {
+  const currentZoom = view.getZoom() ?? view.getMinZoom();
+  const direction = deltaY < 0 ? 1 : -1;
+  const requestedZoom = currentZoom + direction * CTRL_WHEEL_ZOOM_STEP;
+  const nextZoom = view.getConstrainedZoom(requestedZoom, direction);
+
+  if (nextZoom === undefined || Math.abs(nextZoom - currentZoom) < Number.EPSILON) {
+    return;
+  }
+
+  view.setZoom(nextZoom);
+}
 
 function normalizeBox(box: CropBox): CropBox | null {
   const values = [box.x1, box.y1, box.x2, box.y2];
@@ -110,6 +162,7 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
   const mapInstance = useRef<Map | null>(null);
   const imageLayerRef = useRef<ImageLayer<ImageStatic> | null>(null);
   const vectorSourceRef = useRef(new VectorSource());
+  const desiredCropRef = useRef<CropBox | null>(null);
   const setLoadingMap = useWarRoomStore((state) => state.setLoadingMap);
   const loadingMap = useWarRoomStore((state) => state.loadingMap);
 
@@ -133,6 +186,10 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
   );
 
   useEffect(() => {
+    desiredCropRef.current = desiredCrop;
+  }, [desiredCrop]);
+
+  useEffect(() => {
     if (!mapRef.current || mapInstance.current) {
       return;
     }
@@ -142,29 +199,48 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
       zIndex: 100,
     });
 
+    const target = mapRef.current;
+    const initialCrop = desiredCropRef.current;
     const map = new Map({
-      target: mapRef.current,
+      target,
       layers: [vectorLayer],
       view: new View({
         projection: PROJECTION,
-        center: desiredCrop
-          ? [(desiredCrop.x1 + desiredCrop.x2) / 2, (desiredCrop.y1 + desiredCrop.y2) / 2]
+        center: initialCrop
+          ? [(initialCrop.x1 + initialCrop.x2) / 2, (initialCrop.y1 + initialCrop.y2) / 2]
           : [0, 0],
-        extent: desiredCrop ? [desiredCrop.x1, desiredCrop.y1, desiredCrop.x2, desiredCrop.y2] : undefined,
+        extent: initialCrop ? [initialCrop.x1, initialCrop.y1, initialCrop.x2, initialCrop.y2] : undefined,
         zoom: 1,
         minZoom: 0,
-        maxZoom: 8,
+        maxZoom: ZOOM_LEVEL_RANGE,
       }),
       controls: [],
     });
 
     mapInstance.current = map;
 
-    const el = mapRef.current;
+    const handleCtrlWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      applyCtrlWheelZoom(map.getView(), event.deltaY);
+    };
+
+    target.addEventListener("wheel", handleCtrlWheel, { capture: true, passive: false });
+
+    const el = target;
     const resizeObserver =
       el &&
       new ResizeObserver(() => {
         map.updateSize();
+        const crop = desiredCropRef.current;
+        if (crop) {
+          constrainViewToCrop(map, crop, false);
+        }
       });
     if (el && resizeObserver) {
       resizeObserver.observe(el);
@@ -172,11 +248,12 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
 
     return () => {
       resizeObserver?.disconnect();
+      target.removeEventListener("wheel", handleCtrlWheel, { capture: true });
       map.setTarget(undefined);
       mapInstance.current = null;
       imageLayerRef.current = null;
     };
-  }, [desiredCrop?.x1, desiredCrop?.x2, desiredCrop?.y1, desiredCrop?.y2]);
+  }, []);
 
   useEffect(() => {
     if (!mapInstance.current || !desiredCrop) {
@@ -201,10 +278,8 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
     } else {
       imageLayerRef.current.setSource(source);
     }
-    const view = mapInstance.current.getView();
-    view.setCenter([(desiredCrop.x1 + desiredCrop.x2) / 2, (desiredCrop.y1 + desiredCrop.y2) / 2]);
-    view.set("extent", [desiredCrop.x1, desiredCrop.y1, desiredCrop.x2, desiredCrop.y2]);
     mapInstance.current.updateSize();
+    constrainViewToCrop(mapInstance.current, desiredCrop, true);
   }, [desiredCrop, setLoadingMap, worldName]);
 
   useEffect(() => {
