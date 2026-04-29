@@ -1,14 +1,24 @@
 import fs from "fs";
 import path from "path";
+import { propagateAttributes } from "@langfuse/tracing";
 import { DatabaseSessionService } from "@google/adk";
-import { ExecutionAgent, Image, Intel, IntelAgent, PlanAgent } from "./agent";
+import { ExecutionAgent, Image, Intel, IntelAgent, NewPlanEvent, PlanAgent } from "./agent";
 import { ArmaConnector } from "./arma_connection";
-import { Army, ArmyComposer, Group } from "./army";
+import {
+    Army,
+    ArmyComposer,
+    EnemyContactEvent,
+    Group,
+    GroupEvent,
+    TacticalGroupEvent,
+    TaskCompletedEvent
+} from "./army";
 import { ArmyCombatMonitor } from "./combat";
 import { EventHubCompositionProgressLogger } from "./composition_progress";
 import { eventHub, withEnvelope } from "./event";
 import { SimpleExecutionPromptFormatter, SimpleIntelPromptFormatter, SimplePlanPromptFormatter, YamlSitrepFormatter } from "./format";
 import { GameMap } from "./geography";
+import type { Plan } from "./plan/models";
 import { PlanSandbox } from "./plan/sandbox";
 import { PlanVisualizer } from "./plan/visualization";
 import { runtimeState } from "./runtime_state";
@@ -148,68 +158,163 @@ export class SessionInitializer {
             throw new Error("SESSION_DB_URL is required to start Intel/Plan/Execution pipeline.");
         }
 
-        const sessionService = new DatabaseSessionService(dbUrl);
-        await sessionService.init();
+        await propagateAttributes(
+            {
+                traceName: "AgenticPipeline",
+                sessionId: session.getId(),
+                tags: ["initial"]
+            },
+            async () => {
+                const sessionService = new DatabaseSessionService(dbUrl);
+                await sessionService.init();
 
-        const gameMap = new GameMap(session);
-        const gameMapArea = await gameMap.extractArea(
-            { x: payload.area.x1, y: payload.area.y1 },
-            { x: payload.area.x2, y: payload.area.y2 }
+                const gameMap = new GameMap(session);
+                const gameMapArea = await gameMap.extractArea(
+                    { x: payload.area.x1, y: payload.area.y1 },
+                    { x: payload.area.x2, y: payload.area.y2 }
+                );
+
+                const intel: Intel = {
+                    images: (payload.intel.photos ?? [])
+                        .filter((photoPath) => typeof photoPath === "string" && fs.existsSync(photoPath))
+                        .map((photoPath) => new Image(photoPath)),
+                    observations: payload.intel.observations ?? []
+                };
+
+                const intelAgent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService, session);
+                const intelResult = await intelAgent.analyze(intel, gameMapArea);
+                this.updateManifest(session, { intelResult });
+
+                const sitreps = groups
+                    .map((group) => {
+                        const groupMonitor = monitor.getGroupMonitor(group.id);
+                        return groupMonitor ? createSitrep(group, groupMonitor) : null;
+                    })
+                    .filter((sitrep): sitrep is NonNullable<typeof sitrep> => sitrep !== null);
+
+                const planSandbox = await PlanSandbox.create();
+                const planAgent = new PlanAgent(
+                    new SimplePlanPromptFormatter(new YamlSitrepFormatter()),
+                    sessionService,
+                    session,
+                    planSandbox,
+                    new PlanVisualizer(session)
+                );
+                const planningResult = await planAgent.plan(army, sitreps, intelResult, gameMapArea);
+                this.updateManifest(session, { planningResult });
+
+                const executionAgent = new ExecutionAgent(
+                    new SimpleExecutionPromptFormatter(new YamlSitrepFormatter()),
+                    new YamlSitrepFormatter(),
+                    sessionService,
+                    session,
+                    planSandbox
+                );
+
+                this.updateManifest(session, { executionEvents: [] });
+
+                const applySandboxPlan = async (newPlan: Plan) => {
+                    try {
+                        const safePlan = { ...newPlan };
+                        this.appendManifestExecutionEvent(session, { type: "NEW_PLAN", plan: safePlan });
+                    } catch (e) {
+                        console.log("Failed to save sandbox plan to manifest:", e);
+                    }
+                    await this.actAccordingToPlan(newPlan, army);
+                };
+
+                monitor.subscribe(async (event: TacticalGroupEvent) => {
+                    const group = army.getGroupById(event.groupId);
+                    if (!group) {
+                        return;
+                    }
+                    let planEvent: { type: string; count?: number; kind?: unknown } | null = null;
+                    if (event.type === "ENEMY_CONTACT") {
+                        const ec = event as EnemyContactEvent;
+                        planEvent = {
+                            type: "ENEMY_CONTACT",
+                            count: ec.contactCount,
+                            kind: ec.kind
+                        };
+                    } else if (
+                        event.type === "KIA"
+                        || event.type === "ENGAGED_IN_COMBAT"
+                        || event.type === "COMBAT_ENDED"
+                        || event.type === "TIMEOUT"
+                    ) {
+                        planEvent = { type: event.type };
+                    }
+
+                    if (planEvent) {
+                        const newPlan = planSandbox.handlePlanEvent(group, planEvent as any);
+                        if (newPlan) {
+                            await applySandboxPlan(newPlan);
+                        }
+                    }
+                });
+
+                groups.forEach((group) => {
+                    group.subscribe(async (event: GroupEvent) => {
+                        if (event.type === "TASK_COMPLETED") {
+                            const taskName = (event as TaskCompletedEvent).task.name;
+                            const planEvent = { type: "TASK_COMPLETE" as const, taskName };
+                            const newPlan = planSandbox.handlePlanEvent(group, planEvent);
+                            if (newPlan) {
+                                await applySandboxPlan(newPlan);
+                            }
+                        }
+                    });
+                });
+
+                for await (const executionEvent of executionAgent.execute(army, monitor, planningResult)) {
+                    try {
+                        const safeEvent = { ...executionEvent } as Record<string, unknown>;
+                        if (safeEvent.type === "NEW_PLAN") {
+                            delete safeEvent.plan;
+                        }
+                        this.appendManifestExecutionEvent(session, safeEvent);
+                    } catch (e) {
+                        console.log("Failed to save execution event to manifest:", e);
+                    }
+
+                    if (executionEvent.type === "AGENT_RESPONSE") {
+                        eventHub.publish(withEnvelope({
+                            source: "AI",
+                            type: "AGENT_RESPONSE",
+                            response: (executionEvent as any).response,
+                            sessionId: session.getId()
+                        } as any) as any);
+                    } else if (executionEvent.type === "NEW_PLAN") {
+                        eventHub.publish(withEnvelope({
+                            source: "AI",
+                            type: "NEW_PLAN",
+                            code: (executionEvent as any).code,
+                            sessionId: session.getId()
+                        } as any) as any);
+                        const plan = (executionEvent as NewPlanEvent).plan;
+                        await this.actAccordingToPlan(plan, army);
+                    }
+                }
+            }
         );
+    }
 
-        const intel: Intel = {
-            images: (payload.intel.photos ?? [])
-                .filter((photoPath) => typeof photoPath === "string" && fs.existsSync(photoPath))
-                .map((photoPath) => new Image(photoPath)),
-            observations: payload.intel.observations ?? []
-        };
-
-        const intelAgent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService, session);
-        const intelResult = await intelAgent.analyze(intel, gameMapArea);
-        this.updateManifest(session, { intelResult });
-
-        const sitreps = groups
-            .map((group) => {
-                const groupMonitor = monitor.getGroupMonitor(group.id);
-                return groupMonitor ? createSitrep(group, groupMonitor) : null;
-            })
-            .filter((sitrep): sitrep is NonNullable<typeof sitrep> => sitrep !== null);
-
-        const planSandbox = await PlanSandbox.create();
-        const planAgent = new PlanAgent(
-            new SimplePlanPromptFormatter(new YamlSitrepFormatter()),
-            sessionService,
-            session,
-            planSandbox,
-            new PlanVisualizer(session)
-        );
-        const planningResult = await planAgent.plan(army, sitreps, intelResult, gameMapArea);
-        this.updateManifest(session, { planningResult });
-
-        const executionAgent = new ExecutionAgent(
-            new SimpleExecutionPromptFormatter(new YamlSitrepFormatter()),
-            new YamlSitrepFormatter(),
-            sessionService,
-            session,
-            planSandbox
-        );
-        for await (const executionEvent of executionAgent.execute(army, monitor, planningResult)) {
-            if (executionEvent.type === "AGENT_RESPONSE") {
-                eventHub.publish(withEnvelope({
-                    source: "AI",
-                    type: "AGENT_RESPONSE",
-                    response: (executionEvent as any).response,
-                    sessionId: session.getId()
-                } as any) as any);
-            } else if (executionEvent.type === "NEW_PLAN") {
-                eventHub.publish(withEnvelope({
-                    source: "AI",
-                    type: "NEW_PLAN",
-                    code: (executionEvent as any).code,
-                    sessionId: session.getId()
-                } as any) as any);
+    private async actAccordingToPlan(plan: Plan, army: Army): Promise<void> {
+        const armyGroups = army.getGroups();
+        for (const group of armyGroups) {
+            if (plan.queuedTasks?.[group.id]) {
+                plan.queuedTasks[group.id].forEach((task) => {
+                    group.addTaskToQueue(task);
+                });
+            }
+            if (plan.immediateTasks?.[group.id]) {
+                void group.executeImmediately(plan.immediateTasks[group.id]);
+            }
+            if (plan.clearGroupTasks?.[group.id]) {
+                group.clearTasks();
             }
         }
+        await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
     private isPipelineDisabled(): boolean {
@@ -226,6 +331,22 @@ export class SessionInitializer {
         session.saveManifest({
             ...existing,
             ...patch
+        });
+    }
+
+    private appendManifestExecutionEvent(session: Session, entry: Record<string, unknown>): void {
+        const manifestPath = path.join(session.getDirectory(), "manifest.json");
+        let existing: Record<string, unknown> = {};
+        if (fs.existsSync(manifestPath)) {
+            existing = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+        }
+        const executionEvents = Array.isArray(existing.executionEvents)
+            ? [...(existing.executionEvents as unknown[])]
+            : [];
+        executionEvents.push(entry);
+        session.saveManifest({
+            ...existing,
+            executionEvents
         });
     }
 
