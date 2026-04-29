@@ -46,7 +46,7 @@ export function MindFeed(): JSX.Element {
   }, [activeIndex]);
 
   return (
-    <section className="grid min-h-0 grid-rows-2 border-l border-zinc-800 bg-zinc-950">
+    <section className="grid min-h-0 grid-rows-2 bg-zinc-950">
       <div className="min-h-0 border-b border-zinc-800">
         <header className="flex items-center justify-between px-3 py-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-300">SITREP Stream</h3>

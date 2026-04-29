@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { fetchActiveSession, fetchSessionEvents, fetchSessionManifest, fetchSessionTraces, fetchSessions } from "../../api/client";
 import { CommanderConsole } from "../console/commander-console";
 import { MindFeed } from "../feed/mind-feed";
+import { IntelPanelSplit } from "./intel-panel-split";
 import { ResizablePanels } from "./resizable-panels";
 import { SessionSidebar } from "./session-sidebar";
 import { WarMap } from "../map/war-map";
@@ -77,13 +78,15 @@ export function WarRoomShell(): JSX.Element {
       <ResizablePanels
         left={<SessionSidebar onSessionInitialized={refreshSessions} />}
         right={
-          <div className="grid h-full min-h-0 grid-cols-[2fr_1fr]">
-            <WarMap projectedState={projected} manifest={manifest} />
-            <div className="grid min-h-0 grid-rows-[1fr_auto]">
-              <MindFeed />
-              <CommanderConsole />
-            </div>
-          </div>
+          <IntelPanelSplit
+            map={<WarMap projectedState={projected} manifest={manifest} />}
+            intel={
+              <div className="grid h-full min-h-0 grid-rows-[1fr_auto]">
+                <MindFeed />
+                <CommanderConsole />
+              </div>
+            }
+          />
         }
       />
       <TimelineControls />

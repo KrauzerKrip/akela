@@ -159,7 +159,19 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
     });
 
     mapInstance.current = map;
+
+    const el = mapRef.current;
+    const resizeObserver =
+      el &&
+      new ResizeObserver(() => {
+        map.updateSize();
+      });
+    if (el && resizeObserver) {
+      resizeObserver.observe(el);
+    }
+
     return () => {
+      resizeObserver?.disconnect();
       map.setTarget(undefined);
       mapInstance.current = null;
       imageLayerRef.current = null;
@@ -192,6 +204,7 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
     const view = mapInstance.current.getView();
     view.setCenter([(desiredCrop.x1 + desiredCrop.x2) / 2, (desiredCrop.y1 + desiredCrop.y2) / 2]);
     view.set("extent", [desiredCrop.x1, desiredCrop.y1, desiredCrop.x2, desiredCrop.y2]);
+    mapInstance.current.updateSize();
   }, [desiredCrop, setLoadingMap, worldName]);
 
   useEffect(() => {
