@@ -22,6 +22,10 @@ interface WarMapProps {
   manifest: SessionManifest | null;
 }
 
+const MAX_CROP_SPAN_METERS = 10_000;
+const MAX_REASONABLE_COORDINATE = 1_000_000;
+const CROP_PADDING_METERS = 0;//2_000;
+
 const PROJECTION = new Projection({
   code: "AKELA-CARTESIAN",
   units: "m",
@@ -54,23 +58,79 @@ const ARROW_STYLE = new Style({
   stroke: new Stroke({ color: "#f59e0b", width: 2, lineDash: [6, 4] }),
 });
 
+type CropBox = { x1: number; y1: number; x2: number; y2: number };
+
+function normalizeBox(box: CropBox): CropBox | null {
+  const values = [box.x1, box.y1, box.x2, box.y2];
+  if (values.some((value) => !Number.isFinite(value) || Math.abs(value) > MAX_REASONABLE_COORDINATE)) {
+    return null;
+  }
+  const x1 = Math.min(box.x1, box.x2);
+  const x2 = Math.max(box.x1, box.x2);
+  const y1 = Math.min(box.y1, box.y2);
+  const y2 = Math.max(box.y1, box.y2);
+  if (x2 <= x1 || y2 <= y1) {
+    return null;
+  }
+  return { x1, y1, x2, y2 };
+}
+
+function clampSpan(box: CropBox, maxSpan: number): CropBox {
+  const width = box.x2 - box.x1;
+  const height = box.y2 - box.y1;
+  let { x1, y1, x2, y2 } = box;
+  if (width > maxSpan) {
+    const centerX = (x1 + x2) / 2;
+    x1 = centerX - maxSpan / 2;
+    x2 = centerX + maxSpan / 2;
+  }
+  if (height > maxSpan) {
+    const centerY = (y1 + y2) / 2;
+    y1 = centerY - maxSpan / 2;
+    y2 = centerY + maxSpan / 2;
+  }
+  return { x1, y1, x2, y2 };
+}
+
+function buildCenteredCrop(workingArea: CropBox): CropBox {
+  const centerX = (workingArea.x1 + workingArea.x2) / 2;
+  const centerY = (workingArea.y1 + workingArea.y2) / 2;
+  const width = Math.min(workingArea.x2 - workingArea.x1 + CROP_PADDING_METERS * 2, MAX_CROP_SPAN_METERS);
+  const height = Math.min(workingArea.y2 - workingArea.y1 + CROP_PADDING_METERS * 2, MAX_CROP_SPAN_METERS);
+  return {
+    x1: centerX - width / 2,
+    y1: centerY - height / 2,
+    x2: centerX + width / 2,
+    y2: centerY + height / 2,
+  };
+}
+
 export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<Map | null>(null);
   const imageLayerRef = useRef<ImageLayer<ImageStatic> | null>(null);
   const vectorSourceRef = useRef(new VectorSource());
-  const currentCropRef = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const setLoadingMap = useWarRoomStore((state) => state.setLoadingMap);
   const loadingMap = useWarRoomStore((state) => state.loadingMap);
 
   const worldName = manifest?.intelInput?.area?.world ?? "Altis";
-  const workingArea = useMemo(() => {
+  const workingArea = useMemo<CropBox | null>(() => {
     const area = manifest?.intelInput?.area;
     if (!area || [area.x1, area.y1, area.x2, area.y2].some((entry) => typeof entry !== "number")) {
-      return { x1: 0, y1: 0, x2: 3000, y2: 3000 };
+      return null;
     }
-    return { x1: area.x1 as number, y1: area.y1 as number, x2: area.x2 as number, y2: area.y2 as number };
+    const normalized = normalizeBox({
+      x1: area.x1 as number,
+      y1: area.y1 as number,
+      x2: area.x2 as number,
+      y2: area.y2 as number,
+    });
+    return normalized;
   }, [manifest?.intelInput?.area]);
+  const desiredCrop = useMemo(
+    () => (workingArea ? clampSpan(buildCenteredCrop(workingArea), MAX_CROP_SPAN_METERS) : null),
+    [workingArea],
+  );
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) {
@@ -87,7 +147,10 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
       layers: [vectorLayer],
       view: new View({
         projection: PROJECTION,
-        center: [(workingArea.x1 + workingArea.x2) / 2, (workingArea.y1 + workingArea.y2) / 2],
+        center: desiredCrop
+          ? [(desiredCrop.x1 + desiredCrop.x2) / 2, (desiredCrop.y1 + desiredCrop.y2) / 2]
+          : [0, 0],
+        extent: desiredCrop ? [desiredCrop.x1, desiredCrop.y1, desiredCrop.x2, desiredCrop.y2] : undefined,
         zoom: 1,
         minZoom: 0,
         maxZoom: 8,
@@ -96,20 +159,24 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
     });
 
     mapInstance.current = map;
-    return () => map.setTarget(undefined);
-  }, [workingArea.x1, workingArea.x2, workingArea.y1, workingArea.y2]);
+    return () => {
+      map.setTarget(undefined);
+      mapInstance.current = null;
+      imageLayerRef.current = null;
+    };
+  }, [desiredCrop?.x1, desiredCrop?.x2, desiredCrop?.y1, desiredCrop?.y2]);
 
   useEffect(() => {
-    if (!mapInstance.current) {
+    if (!mapInstance.current || !desiredCrop) {
+      setLoadingMap(false);
       return;
     }
 
-    const crop = currentCropRef.current ?? workingArea;
     setLoadingMap(true);
     const source = new ImageStatic({
-      url: getMapCropUrl(worldName, crop),
+      url: getMapCropUrl(worldName, desiredCrop),
       projection: PROJECTION,
-      imageExtent: [crop.x1, crop.y1, crop.x2, crop.y2],
+      imageExtent: [desiredCrop.x1, desiredCrop.y1, desiredCrop.x2, desiredCrop.y2],
     });
 
     source.on("imageloadstart", () => setLoadingMap(true));
@@ -122,51 +189,16 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
     } else {
       imageLayerRef.current.setSource(source);
     }
-
-    currentCropRef.current = crop;
-  }, [setLoadingMap, workingArea, worldName]);
+    const view = mapInstance.current.getView();
+    view.setCenter([(desiredCrop.x1 + desiredCrop.x2) / 2, (desiredCrop.y1 + desiredCrop.y2) / 2]);
+    view.set("extent", [desiredCrop.x1, desiredCrop.y1, desiredCrop.x2, desiredCrop.y2]);
+  }, [desiredCrop, setLoadingMap, worldName]);
 
   useEffect(() => {
-    if (!mapInstance.current) {
+    if (!workingArea) {
+      vectorSourceRef.current.clear();
       return;
     }
-
-    const onMoveEnd = () => {
-      const extent = mapInstance.current?.getView().calculateExtent(mapInstance.current.getSize());
-      const crop = currentCropRef.current;
-      if (!extent || !crop) {
-        return;
-      }
-      const [x1, y1, x2, y2] = extent;
-      const outside = x1 < crop.x1 || y1 < crop.y1 || x2 > crop.x2 || y2 > crop.y2;
-      if (!outside) {
-        return;
-      }
-
-      const next = {
-        x1: Math.min(x1, workingArea.x1),
-        y1: Math.min(y1, workingArea.y1),
-        x2: Math.max(x2, workingArea.x2),
-        y2: Math.max(y2, workingArea.y2),
-      };
-
-      currentCropRef.current = next;
-      const source = new ImageStatic({
-        url: getMapCropUrl(worldName, next),
-        projection: PROJECTION,
-        imageExtent: [next.x1, next.y1, next.x2, next.y2],
-      });
-      source.on("imageloadstart", () => setLoadingMap(true));
-      source.on("imageloadend", () => setLoadingMap(false));
-      source.on("imageloaderror", () => setLoadingMap(false));
-      imageLayerRef.current?.setSource(source);
-    };
-
-    mapInstance.current.on("moveend", onMoveEnd);
-    return () => mapInstance.current?.un("moveend", onMoveEnd);
-  }, [setLoadingMap, workingArea, worldName]);
-
-  useEffect(() => {
     const source = vectorSourceRef.current;
     source.clear();
 
@@ -203,7 +235,7 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
       feature.setStyle(ENEMY_STYLE);
       source.addFeature(feature);
     });
-  }, [projectedState.contacts, projectedState.groups, workingArea.x1, workingArea.x2, workingArea.y1, workingArea.y2]);
+  }, [projectedState.contacts, projectedState.groups, workingArea]);
 
   return (
     <section className="relative h-full min-h-0 border-r border-zinc-800 bg-zinc-900">
