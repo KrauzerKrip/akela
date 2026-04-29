@@ -16,6 +16,9 @@ import { SimpleIntelPromptFormatter, SimplePlanPromptFormatter, SimpleExecutionP
 import { ArmyCombatMonitor } from "./combat";
 import { createSitrep } from "./sitrep";
 import { PlanVisualizer } from "./plan/visualization";
+import { eventHub } from "./event_hub";
+import { runtimeState } from "./runtime_state";
+import { withEnvelope } from "./events";
 
 const args = process.argv.slice(2);
 const { values } = parseArgs({
@@ -82,8 +85,11 @@ const armyCombatMonitor = ArmyCombatMonitor.fromArmy(army);
 
 // Initialize Session
 const sessionDir = path.join(process.cwd(), "..", ".data", "sessions");
+runtimeState.setSessionsDir(sessionDir);
+runtimeState.setMapCacheDir(path.join(process.cwd(), "..", ".data", "map_cache"));
 const session = new Session(sessionDir);
 session.initialize();
+runtimeState.setActiveSession(session);
 console.log(`Session initialized at ${session.getDirectory()}`);
 
 const manifest: any = {
@@ -97,13 +103,22 @@ for (const g of groups) {
 }
 
 // Subscriptions for JSONL logging
-armyCombatMonitor.subscribe(event => {
+const appendAndBroadcast = (event: Record<string, any>) => {
     session.appendEventLog(event);
+    eventHub.publish(withEnvelope({
+        source: event.type === "USER_COMMAND" ? "USER" : event.type === "AGENT_RESPONSE" || event.type === "NEW_PLAN" || event.type === "LLM_DECISION_START" ? "AI" : "GAME",
+        ...(event as any),
+        sessionId: session.getId()
+    }));
+};
+
+armyCombatMonitor.subscribe(event => {
+    appendAndBroadcast(event as any);
 });
 
 groups.forEach(g => {
     g.subscribe(event => {
-        session.appendEventLog(event);
+        appendAndBroadcast(event as any);
     });
 });
 
@@ -130,12 +145,15 @@ const stateTickInterval = setInterval(async () => {
                 id: g.id,
                 groupId: g.id,
                 name: g.getName(),
-                position: g.getPosition(),
+                position: [g.getPosition().x, g.getPosition().y],
                 task: g.getCurrentTask(),
             })),
-            knownEnemies: allKnownEnemies
+            knownEnemies: allKnownEnemies.map(enemy => ({
+                position: [enemy.position.x, enemy.position.y, enemy.position.z],
+                kind: enemy.kind
+            }))
         };
-        session.appendEventLog(stateSnapshot);
+        appendAndBroadcast(stateSnapshot);
     } catch (e) {
         console.error("Failed to execute state tick:", e);
     } finally {
@@ -266,7 +284,7 @@ try {
                         await actAccordingToPlan(newPlan, army);
                     }
                 }
-            });
+            }); 
         });
 
         console.log("Running ExecutionAgent... (streaming events)");
@@ -296,12 +314,14 @@ try {
     console.error("Pipeline crashed with error:", error);
 } finally {
     console.log("Shutting down tracing gracefully...");
+    runtimeState.setActiveSession(null);
     await sdk.shutdown();
     clearInterval(stateTickInterval);
 }
 
 process.on("SIGINT", async () => {
     console.log("Shutting down tracing...");
+    runtimeState.setActiveSession(null);
     await sdk.shutdown();
     clearInterval(stateTickInterval);
     process.exit(0);

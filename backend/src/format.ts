@@ -92,6 +92,7 @@ export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
 export interface ExecutionPromptFormatter {
     formatPlanPrompt(sitreps: Sitrep[], planDescription: string, planCode: string): Promise<{ system: string; user: string; prompt: any }>;
     formatReportPrompt(sitreps: Sitrep[], report: string): Promise<{ system: string; user: string; prompt: any }>;
+    formatInterventionPrompt(sitreps: Sitrep[], command: string, targetAgent: string): Promise<{ system: string; user: string; prompt: any }>;
 }
 
 export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter {
@@ -132,6 +133,34 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
         const system = compiled.find(m => m.role === "system")?.content || "";
         const user = compiled.find(m => m.role === "user")?.content || "";
 
+        return { system, user, prompt };
+    }
+
+    public async formatInterventionPrompt(sitreps: Sitrep[], command: string, targetAgent: string): Promise<{ system: string; user: string; prompt: any }> {
+        const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
+        const system = [
+            "You are the Akela Execution Agent operating a live Arma operation.",
+            "This input is a direct commander intervention and MUST be treated as high-priority operator intent.",
+            "Acknowledge the command, reconcile it with current SITREPs, and update the plan via executePlan when needed.",
+            "Do not confuse this with routine tactical reporting."
+        ].join("\n");
+        const user = [
+            "[SITREP_BLOCK]",
+            sitrepStr,
+            "[/SITREP_BLOCK]",
+            "",
+            `[COMMANDER_MESSAGE target=${targetAgent}]`,
+            command,
+            "[/COMMANDER_MESSAGE]"
+        ].join("\n");
+        const prompt = {
+            name: "execution_intervention_prompt_inline",
+            variables: {
+                SITREP_BLOCK: sitrepStr,
+                COMMAND: command,
+                TARGET_AGENT: targetAgent
+            }
+        };
         return { system, user, prompt };
     }
 }

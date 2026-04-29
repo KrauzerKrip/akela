@@ -17,6 +17,9 @@ import { ArmyCombatMonitor } from './combat';
 import { Session } from './session';
 import * as util from 'util';
 import { v4 as uuidv4 } from 'uuid';
+import { runtimeState, InterventionCommand } from './runtime_state';
+import { eventHub } from './event_hub';
+import { withEnvelope } from './events';
 
 export class Image {
     private readonly path: string;
@@ -480,6 +483,8 @@ export class ExecutionAgent {
     private session: Session;
     private planSandbox: PlanSandbox;
     private sitrepFormatter: SitrepFormatter;
+    private pendingInterventions: InterventionCommand[] = [];
+    private waitForSignalResolver: ((val: TacticalReportEvent | InterventionCommand) => void) | null = null;
 
     constructor(promptFormatter: ExecutionPromptFormatter, sitrepFormatter: SitrepFormatter, sessionService: BaseSessionService, session: Session, planSandbox: PlanSandbox) {
         this.promptFormatter = promptFormatter;
@@ -561,6 +566,13 @@ export class ExecutionAgent {
             decisionId: decisionId,
             trigger: "Initial Execution"
         });
+        eventHub.publish(withEnvelope({
+            source: "AI",
+            type: "LLM_DECISION_START",
+            decisionId: decisionId,
+            trigger: "Initial Execution",
+            sessionId: this.session.getId()
+        }));
 
         const finalResponseText = await this.runPrompt(runner, session, userMessage, promptObj, decisionId);
         yield {
@@ -577,56 +589,102 @@ export class ExecutionAgent {
             executionCode = "";
         }
 
-        let resolveNextReport: ((val: TacticalReportEvent) => void) | null = null;
         const reportQueue: TacticalReportEvent[] = [];
+        const interventionQueue = this.pendingInterventions;
+
+        const unsubscribeInterventions = runtimeState.subscribeInterventions((command) => {
+            if (command.sessionId !== this.session.getId()) {
+                return;
+            }
+            if (this.waitForSignalResolver) {
+                this.waitForSignalResolver(command);
+                this.waitForSignalResolver = null;
+                return;
+            }
+            interventionQueue.push(command);
+        });
 
         armyCombatMonitor.subscribe(event => {
             if (event.type == "TACTICAL_REPORT") {
                 const e = event as TacticalReportEvent;
-                if (resolveNextReport) {
-                    resolveNextReport(e);
-                    resolveNextReport = null;
+                if (this.waitForSignalResolver) {
+                    this.waitForSignalResolver(e);
+                    this.waitForSignalResolver = null;
                 } else {
                     reportQueue.push(e);
                 }
             }
         });
 
-        while (true) {
-            currentPlanResetMode = "preserveReactions";
-            let nextReport: TacticalReportEvent;
-            if (reportQueue.length > 0) {
-                nextReport = reportQueue.shift()!;
-            } else {
-                nextReport = await new Promise<TacticalReportEvent>(resolve => {
-                    resolveNextReport = resolve;
+        try {
+            while (true) {
+                currentPlanResetMode = "preserveReactions";
+                let nextSignal: TacticalReportEvent | InterventionCommand;
+
+                if (interventionQueue.length > 0) {
+                    nextSignal = interventionQueue.shift()!;
+                } else if (reportQueue.length > 0) {
+                    nextSignal = reportQueue.shift()!;
+                } else {
+                    nextSignal = await new Promise<TacticalReportEvent | InterventionCommand>(resolve => {
+                        this.waitForSignalResolver = resolve;
+                    });
+                }
+
+                const sitreps = getSitreps();
+                let userPrompt: string;
+                let promptObj: any;
+                let triggerText: string;
+
+                if ("sessionId" in nextSignal) {
+                    const intervention = nextSignal;
+                    const interventionPrompt = await this.promptFormatter.formatInterventionPrompt(
+                        sitreps,
+                        intervention.message,
+                        intervention.targetAgent
+                    );
+                    userPrompt = interventionPrompt.user;
+                    promptObj = interventionPrompt.prompt;
+                    triggerText = `Commander intervention: ${intervention.message}`;
+                } else {
+                    const reportPrompt = await this.promptFormatter.formatReportPrompt(sitreps, nextSignal.message);
+                    userPrompt = reportPrompt.user;
+                    promptObj = reportPrompt.prompt;
+                    triggerText = nextSignal.message;
+                }
+
+                const decisionId = uuidv4();
+                this.session.appendEventLog({
+                    type: "LLM_DECISION_START",
+                    decisionId: decisionId,
+                    trigger: triggerText
                 });
-            }
+                eventHub.publish(withEnvelope({
+                    source: "AI",
+                    type: "LLM_DECISION_START",
+                    decisionId: decisionId,
+                    trigger: triggerText,
+                    sessionId: this.session.getId()
+                }));
+                const finalResponseText = await this.runPrompt(runner, session, userPrompt, promptObj, decisionId);
 
-            const { system: _ignoredSys, user: userPrompt, prompt: promptObj } = await this.promptFormatter.formatReportPrompt(getSitreps(), nextReport.message);
-
-            const decisionId = uuidv4();
-            this.session.appendEventLog({
-                type: "LLM_DECISION_START",
-                decisionId: decisionId,
-                trigger: nextReport.message
-            });
-            const finalResponseText = await this.runPrompt(runner, session, userPrompt, promptObj, decisionId);
-
-            yield {
-                type: "AGENT_RESPONSE",
-                response: finalResponseText
-            } as AgentResponseEvent;
-
-            if (executionCode) {
-                const plan = await this.planSandbox.makePlan(army, executionCode, { resetMode: currentPlanResetMode });
                 yield {
-                    type: "NEW_PLAN",
-                    code: executionCode,
-                    plan: plan
-                } as NewPlanEvent;
-                executionCode = "";
+                    type: "AGENT_RESPONSE",
+                    response: finalResponseText
+                } as AgentResponseEvent;
+
+                if (executionCode) {
+                    const plan = await this.planSandbox.makePlan(army, executionCode, { resetMode: currentPlanResetMode });
+                    yield {
+                        type: "NEW_PLAN",
+                        code: executionCode,
+                        plan: plan
+                    } as NewPlanEvent;
+                    executionCode = "";
+                }
             }
+        } finally {
+            unsubscribeInterventions();
         }
     }
 
