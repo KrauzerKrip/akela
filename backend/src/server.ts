@@ -53,6 +53,17 @@ export function startServer(armaConnector: ArmaConnector, port = 3000) {
         }
         return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     };
+    const parseEvents = (sessionPath: string): Record<string, any>[] => {
+        const eventsPath = path.join(sessionPath, "events.jsonl");
+        if (!fs.existsSync(eventsPath)) {
+            return [];
+        }
+        const lines = fs.readFileSync(eventsPath, "utf8")
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0);
+        return lines.map((line) => JSON.parse(line)).sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+    };
 
     const pythonExecutable = () => process.env.PYTHON_EXEC || "python";
     const scriptDir = () => process.env.AREA_SCRIPT_DIR || path.join(process.cwd(), "..", "python");
@@ -160,21 +171,86 @@ export function startServer(armaConnector: ArmaConnector, port = 3000) {
                 set.status = 404;
                 return { error: `Session '${params.id}' not found.` };
             }
-            const eventsPath = path.join(sessionPath, "events.jsonl");
-            if (!fs.existsSync(eventsPath)) {
-                return [];
-            }
             try {
-                const lines = fs.readFileSync(eventsPath, "utf8")
-                    .split("\n")
-                    .map((line) => line.trim())
-                    .filter((line) => line.length > 0);
-                const events = lines.map((line) => JSON.parse(line))
-                    .sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
-                return events;
+                return parseEvents(sessionPath);
             } catch (error) {
                 set.status = 500;
                 return { error: "Failed to read session events." };
+            }
+        })
+        .get("/api/sessions/:id/manifest", ({ params, set }) => {
+            const sessionPath = getSessionDirectory(params.id);
+            if (!fs.existsSync(sessionPath)) {
+                set.status = 404;
+                return { error: `Session '${params.id}' not found.` };
+            }
+            const manifest = parseManifest(sessionPath);
+            if (!manifest) {
+                set.status = 404;
+                return { error: "Session manifest not found." };
+            }
+            return manifest;
+        })
+        .get("/api/sessions/:id/dashboard", ({ params, set }) => {
+            const sessionPath = getSessionDirectory(params.id);
+            if (!fs.existsSync(sessionPath)) {
+                set.status = 404;
+                return { error: `Session '${params.id}' not found.` };
+            }
+            try {
+                const manifest = parseManifest(sessionPath) || {};
+                const events = parseEvents(sessionPath);
+                const eventCounts: Record<string, number> = {};
+                events.forEach((event) => {
+                    const eventType = String(event.type ?? "UNKNOWN");
+                    eventCounts[eventType] = (eventCounts[eventType] ?? 0) + 1;
+                });
+
+                return {
+                    sessionId: params.id,
+                    worldName: manifest.worldName ?? manifest.intelInput?.area?.world ?? null,
+                    missionName: manifest.missionName ?? manifest.intelInput?.missionName ?? null,
+                    workingArea: manifest.intelInput?.area ?? null,
+                    planningArtifactsDir: path.join(sessionPath, "planning"),
+                    eventCounts,
+                    totalEvents: events.length
+                };
+            } catch (error) {
+                set.status = 500;
+                return { error: "Failed to build dashboard payload." };
+            }
+        })
+        .get("/api/sessions/:id/traces", ({ params, set }) => {
+            const sessionPath = getSessionDirectory(params.id);
+            if (!fs.existsSync(sessionPath)) {
+                set.status = 404;
+                return { error: `Session '${params.id}' not found.` };
+            }
+            try {
+                const events = parseEvents(sessionPath);
+                const traces = events
+                    .filter((event) => event.type === "LLM_DECISION_START" || event.type === "AGENT_RESPONSE" || event.type === "NEW_PLAN")
+                    .map((event, index) => ({
+                        id: `${params.id}-${index}`,
+                        t: Number(event.t ?? Date.now()),
+                        title: String(event.type ?? "TRACE"),
+                        detail: event.response
+                            ? String(event.response)
+                            : event.trigger
+                                ? String(event.trigger)
+                                : event.code
+                                    ? String(event.code).slice(0, 400)
+                                    : JSON.stringify(event)
+                    }));
+
+                return {
+                    sessionId: params.id,
+                    source: "session-events-fallback",
+                    traces
+                };
+            } catch (error) {
+                set.status = 500;
+                return { error: "Failed to load session traces." };
             }
         })
         .get("/api/map/crop", async ({ query, set }) => {
