@@ -29,6 +29,11 @@ async function main() {
             name: "execution_report_prompt",
             sys: "execution_system_prompt",
             user: "execution_user_report_prompt"
+        },
+        {
+            name: "execution_intervention_prompt",
+            sys: "execution_system_prompt",
+            user: "execution_user_intervention_prompt"
         }
     ];
 

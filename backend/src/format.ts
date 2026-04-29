@@ -137,30 +137,15 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
     }
 
     public async formatInterventionPrompt(sitreps: Sitrep[], command: string, targetAgent: string): Promise<{ system: string; user: string; prompt: any }> {
+        const prompt = await this.langfuse.prompt.get("execution_intervention_prompt", { label: "production", type: "chat" });
         const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
-        const system = [
-            "You are the Akela Execution Agent operating a live Arma operation.",
-            "This input is a direct commander intervention and MUST be treated as high-priority operator intent.",
-            "Acknowledge the command, reconcile it with current SITREPs, and update the plan via executePlan when needed.",
-            "Do not confuse this with routine tactical reporting."
-        ].join("\n");
-        const user = [
-            "[SITREP_BLOCK]",
-            sitrepStr,
-            "[/SITREP_BLOCK]",
-            "",
-            `[COMMANDER_MESSAGE target=${targetAgent}]`,
-            command,
-            "[/COMMANDER_MESSAGE]"
-        ].join("\n");
-        const prompt = {
-            name: "execution_intervention_prompt_inline",
-            variables: {
-                SITREP_BLOCK: sitrepStr,
-                COMMAND: command,
-                TARGET_AGENT: targetAgent
-            }
+        const variables: Record<string, string> = {
+            "SITREP_BLOCK": sitrepStr,
+            "COMMANDER_MESSAGE": command,
         };
+        const compiled = prompt.compile(variables) as { role: string; content: string }[];
+        const system = compiled.find(m => m.role === "system")?.content || "";
+        const user = compiled.find(m => m.role === "user")?.content || "";
         return { system, user, prompt };
     }
 }
