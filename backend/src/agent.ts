@@ -477,6 +477,156 @@ export interface NewPlanEvent extends ExecutionEvent {
     plan: Plan;
 }
 
+type ExecutionSignal = TacticalReportEvent | InterventionCommand;
+
+interface NextExecutionSignal {
+    intervention?: InterventionCommand;
+    report?: TacticalReportEvent;
+}
+
+const isInterventionCommand = (signal: ExecutionSignal): signal is InterventionCommand => {
+    return (signal as InterventionCommand).targetAgent !== undefined
+        && (signal as InterventionCommand).message !== undefined;
+};
+
+class ReportCollector {
+    private readonly sessionId: string;
+    private readonly batchDelayMs: number;
+    private readonly interventionQueue: InterventionCommand[];
+    private readonly reportQueue: TacticalReportEvent[] = [];
+    private readonly getWaitResolver: () => ((val: ExecutionSignal) => void) | null;
+    private readonly setWaitResolver: (resolver: ((val: ExecutionSignal) => void) | null) => void;
+
+    constructor(opts: {
+        sessionId: string;
+        batchDelayMs: number;
+        interventionQueue: InterventionCommand[];
+        getWaitResolver: () => ((val: ExecutionSignal) => void) | null;
+        setWaitResolver: (resolver: ((val: ExecutionSignal) => void) | null) => void;
+    }) {
+        this.sessionId = opts.sessionId;
+        this.batchDelayMs = opts.batchDelayMs;
+        this.interventionQueue = opts.interventionQueue;
+        this.getWaitResolver = opts.getWaitResolver;
+        this.setWaitResolver = opts.setWaitResolver;
+    }
+
+    public onIntervention(command: InterventionCommand): void {
+        if (command.sessionId !== this.sessionId) {
+            return;
+        }
+        const resolver = this.getWaitResolver();
+        if (resolver) {
+            this.setWaitResolver(null);
+            resolver(command);
+            return;
+        }
+        this.interventionQueue.push(command);
+    }
+
+    public onReport(report: TacticalReportEvent): void {
+        const resolver = this.getWaitResolver();
+        if (resolver) {
+            this.setWaitResolver(null);
+            resolver(report);
+            return;
+        }
+        this.reportQueue.push(report);
+    }
+
+    public async collectNext(): Promise<NextExecutionSignal> {
+        if (this.interventionQueue.length > 0) {
+            return { intervention: this.interventionQueue.shift()! };
+        }
+
+        const firstSignal = this.reportQueue.length > 0
+            ? this.reportQueue.shift()!
+            : await this.waitForSignal();
+
+        if (!firstSignal) {
+            return {};
+        }
+        if (isInterventionCommand(firstSignal)) {
+            return { intervention: firstSignal };
+        }
+        return await this.collectReportBatch(firstSignal);
+    }
+
+    public clearWaitResolver(): void {
+        this.setWaitResolver(null);
+    }
+
+    private async collectReportBatch(firstReport: TacticalReportEvent): Promise<NextExecutionSignal> {
+        const batchedReports: TacticalReportEvent[] = [firstReport];
+        if (this.batchDelayMs <= 0) {
+            return { report: firstReport };
+        }
+
+        const batchDeadline = Date.now() + this.batchDelayMs;
+        while (Date.now() < batchDeadline) {
+            if (this.interventionQueue.length > 0) {
+                const intervention = this.interventionQueue.shift()!;
+                this.reportQueue.unshift(...batchedReports);
+                return { intervention };
+            }
+
+            const nextSignal = await this.waitForSignal(batchDeadline - Date.now());
+            if (!nextSignal) {
+                break;
+            }
+            if (isInterventionCommand(nextSignal)) {
+                this.reportQueue.unshift(...batchedReports);
+                return { intervention: nextSignal };
+            }
+            batchedReports.push(nextSignal);
+        }
+
+        const mergedMessage = batchedReports
+            .map((report, idx) => `${idx + 1}. ${report.message}`)
+            .join("\n");
+        return {
+            report: {
+                ...batchedReports[batchedReports.length - 1],
+                message: mergedMessage
+            }
+        };
+    }
+
+    private async waitForSignal(timeoutMs?: number): Promise<ExecutionSignal | undefined> {
+        if (timeoutMs !== undefined && timeoutMs <= 0) {
+            return undefined;
+        }
+
+        return await new Promise<ExecutionSignal | undefined>((resolve) => {
+            let settled = false;
+            let timeout: NodeJS.Timeout | undefined;
+
+            this.setWaitResolver((signal) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                if (timeout) {
+                    clearTimeout(timeout);
+                }
+                this.setWaitResolver(null);
+                resolve(signal);
+            });
+
+            if (timeoutMs !== undefined) {
+                timeout = setTimeout(() => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    this.setWaitResolver(null);
+                    resolve(undefined);
+                }, timeoutMs);
+            }
+        });
+    }
+}
+
 export class ExecutionAgent {
     private promptFormatter: ExecutionPromptFormatter;
     private sessionService: BaseSessionService;
@@ -584,56 +734,34 @@ export class ExecutionAgent {
             executionCode = "";
         }
 
-        const reportQueue: TacticalReportEvent[] = [];
-        const interventionQueue = this.pendingInterventions;
+        const reportBatchDelaySecondsRaw = Number(process.env.EXECUTION_REPORT_BATCH_SECONDS ?? "0");
+        const reportBatchDelayMs = Number.isFinite(reportBatchDelaySecondsRaw) && reportBatchDelaySecondsRaw > 0
+            ? reportBatchDelaySecondsRaw * 1000
+            : 0;
+        const collector = new ReportCollector({
+            sessionId: this.session.getId(),
+            batchDelayMs: reportBatchDelayMs,
+            interventionQueue: this.pendingInterventions,
+            getWaitResolver: () => this.waitForSignalResolver,
+            setWaitResolver: (resolver) => {
+                this.waitForSignalResolver = resolver;
+            },
+        });
 
         const unsubscribeInterventions = runtimeState.subscribeInterventions((command) => {
-            if (command.sessionId !== this.session.getId()) {
-                return;
-            }
-            if (this.waitForSignalResolver) {
-                this.waitForSignalResolver(command);
-                this.waitForSignalResolver = null;
-                return;
-            }
-            interventionQueue.push(command);
+            collector.onIntervention(command);
         });
 
         armyCombatMonitor.subscribe(event => {
             if (event.type == "TACTICAL_REPORT") {
-                const e = event as TacticalReportEvent;
-                if (this.waitForSignalResolver) {
-                    this.waitForSignalResolver(e);
-                    this.waitForSignalResolver = null;
-                } else {
-                    reportQueue.push(e);
-                }
+                collector.onReport(event as TacticalReportEvent);
             }
         });
 
         try {
             while (true) {
                 currentPlanResetMode = "preserveReactions";
-                let nextIntervention: InterventionCommand | undefined = undefined;
-                let nextReport: TacticalReportEvent | undefined = undefined;
-
-                if (interventionQueue.length > 0) {
-                    nextIntervention = interventionQueue.shift()!;
-                } else if (reportQueue.length > 0) {
-                    nextReport = reportQueue.shift()!;
-                } else {
-                    // Wait for whichever comes first: intervention or report
-                    await new Promise<void>(resolve => {
-                        this.waitForSignalResolver = (signal) => {
-                            if ((signal as InterventionCommand).message !== undefined && (signal as InterventionCommand).targetAgent !== undefined) {
-                                nextIntervention = signal as InterventionCommand;
-                            } else {
-                                nextReport = signal as TacticalReportEvent;
-                            }
-                            resolve();
-                        };
-                    });
-                }
+                const { intervention: nextIntervention, report: nextReport } = await collector.collectNext();
 
                 const sitreps = getSitreps();
                 let userPrompt: string;
@@ -686,6 +814,7 @@ export class ExecutionAgent {
                 }
             }
         } finally {
+            collector.clearWaitResolver();
             unsubscribeInterventions();
         }
     }
