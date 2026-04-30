@@ -10,6 +10,7 @@ import {
     EnemyContactEvent,
     Group,
     GroupEvent,
+    Task,
     TacticalGroupEvent,
     TaskCompletedEvent
 } from "./army";
@@ -66,6 +67,90 @@ interface LiveSessionRuntime {
     groups: Group[];
     stateTickInterval: ReturnType<typeof setInterval>;
     unsubscribeEventLog: () => void;
+}
+
+interface SerializedTaskRoute {
+    id: string;
+    name: string;
+    type: string;
+    destination: [number, number] | null;
+    waypoints: Array<[number, number]>;
+}
+
+interface SerializedPlanGroupRoutes {
+    groupId: string;
+    clearQueue: boolean;
+    immediateTask: SerializedTaskRoute | null;
+    queuedTasks: SerializedTaskRoute[];
+}
+
+interface SerializedPlanSummary {
+    groups: SerializedPlanGroupRoutes[];
+}
+
+function toPointTuple(value: unknown): [number, number] | null {
+    if (!value || typeof value !== "object") {
+        return null;
+    }
+    const point = value as { x?: unknown; y?: unknown };
+    if (typeof point.x !== "number" || typeof point.y !== "number") {
+        return null;
+    }
+    return [point.x, point.y];
+}
+
+function serializeTask(task: Task | null | undefined): SerializedTaskRoute | null {
+    if (!task) {
+        return null;
+    }
+    const taskWithGeometry = task as Task & {
+        getFinalWaypointPosition?: () => unknown;
+        getWaypointPositions?: () => unknown;
+    };
+    const destination = taskWithGeometry.getFinalWaypointPosition
+        ? toPointTuple(taskWithGeometry.getFinalWaypointPosition())
+        : null;
+    const waypointPositions = taskWithGeometry.getWaypointPositions
+        ? taskWithGeometry.getWaypointPositions()
+        : [];
+    const waypoints = Array.isArray(waypointPositions)
+        ? waypointPositions
+            .map((position) => toPointTuple(position))
+            .filter((position): position is [number, number] => position !== null)
+        : [];
+    return {
+        id: task.id,
+        name: task.name,
+        type: task.type,
+        destination,
+        waypoints
+    };
+}
+
+function serializePlanSummary(plan: Plan): SerializedPlanSummary {
+    const groupIds = new Set<string>([
+        ...Object.keys(plan.immediateTasks ?? {}),
+        ...Object.keys(plan.queuedTasks ?? {}),
+        ...Object.keys(plan.clearGroupTasks ?? {})
+    ]);
+    return {
+        groups: [...groupIds].map((groupId) => ({
+            groupId,
+            clearQueue: Boolean(plan.clearGroupTasks?.[groupId]),
+            immediateTask: serializeTask(plan.immediateTasks?.[groupId] ?? null),
+            queuedTasks: (plan.queuedTasks?.[groupId] ?? [])
+                .map((task) => serializeTask(task))
+                .filter((task): task is SerializedTaskRoute => task !== null)
+        }))
+    };
+}
+
+function serializeLiveEvent(event: Record<string, any>): Record<string, any> {
+    const nextEvent = { ...event };
+    if ("task" in nextEvent) {
+        nextEvent.task = serializeTask(nextEvent.task as Task | null | undefined);
+    }
+    return nextEvent;
 }
 
 export class SessionInitializer {
@@ -289,13 +374,14 @@ export class SessionInitializer {
                             sessionId: session.getId()
                         } as any) as any);
                     } else if (executionEvent.type === "NEW_PLAN") {
+                        const plan = (executionEvent as NewPlanEvent).plan;
                         eventHub.publish(withEnvelope({
                             source: "AI",
                             type: "NEW_PLAN",
                             code: (executionEvent as any).code,
+                            planSummary: serializePlanSummary(plan),
                             sessionId: session.getId()
                         } as any) as any);
-                        const plan = (executionEvent as NewPlanEvent).plan;
                         await this.actAccordingToPlan(plan, army);
                     }
                 }
@@ -364,7 +450,7 @@ export class SessionInitializer {
         const appendAndBroadcast = (event: Record<string, any>) => {
             eventHub.publish(withEnvelope({
                 source: resolveSource(event),
-                ...(event as any),
+                ...(serializeLiveEvent(event) as any),
                 sessionId: session.getId()
             }));
         };
@@ -415,7 +501,7 @@ export class SessionInitializer {
                         groupId: group.id,
                         name: group.getName(),
                         position: [group.getPosition().x, group.getPosition().y],
-                        task: group.getCurrentTask()
+                        task: serializeTask(group.getCurrentTask())
                     })),
                     knownEnemies: allKnownEnemies.map((enemy) => ({
                         position: [enemy.position.x, enemy.position.y, enemy.position.z],

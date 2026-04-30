@@ -38,6 +38,26 @@ function latestEventTime(events: AkelaEvent[]): number | null {
   return events[events.length - 1]?.t ?? null;
 }
 
+function eventToTrace(event: AkelaEvent, sessionId: string, indexHint: number): SessionTrace | null {
+  if (!["LLM_DECISION_START", "AGENT_RESPONSE", "NEW_PLAN"].includes(event.type)) {
+    return null;
+  }
+  const detail =
+    typeof event.payload.response === "string"
+      ? event.payload.response
+      : typeof event.payload.trigger === "string"
+        ? event.payload.trigger
+        : typeof event.payload.code === "string"
+          ? event.payload.code.slice(0, 400)
+          : JSON.stringify(event.payload);
+  return {
+    id: `${sessionId}-live-${event.t}-${event.type}-${indexHint}`,
+    t: event.t,
+    title: event.type,
+    detail,
+  };
+}
+
 export const useWarRoomStore = create<WarRoomState>((set, get) => ({
   sessions: [],
   activeSession: null,
@@ -81,11 +101,15 @@ export const useWarRoomStore = create<WarRoomState>((set, get) => ({
     set((state) => {
       const existing = state.eventsBySession[sessionId] ?? [];
       const next = [...existing, event].sort((a, b) => a.t - b.t);
+      const existingTraces = state.tracesBySession[sessionId] ?? [];
+      const liveTrace = eventToTrace(event, sessionId, existingTraces.length);
+      const nextTraces = liveTrace ? [...existingTraces, liveTrace] : existingTraces;
       const shouldPinLive =
         state.mode === "live" && (state.selectedSessionId === sessionId || state.selectedSessionId === null);
 
       return {
         eventsBySession: { ...state.eventsBySession, [sessionId]: next },
+        tracesBySession: { ...state.tracesBySession, [sessionId]: nextTraces },
         selectedSessionId: state.selectedSessionId ?? sessionId,
         currentTime: shouldPinLive ? latestEventTime(next) : state.currentTime,
       };

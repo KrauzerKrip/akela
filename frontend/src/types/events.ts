@@ -25,6 +25,7 @@ export interface StateTickGroup {
     name?: string;
     type?: string;
     destination?: [number, number] | [number, number, number];
+    waypoints?: Array<[number, number] | [number, number, number]>;
   } | null;
 }
 
@@ -52,6 +53,7 @@ export interface ProjectedGroupState {
   taskName: string | null;
   taskType: string | null;
   taskDestination: [number, number] | null;
+  taskWaypoints: Array<[number, number]>;
 }
 
 export interface ProjectedContactState {
@@ -63,8 +65,35 @@ export interface ProjectedContactState {
 export interface ProjectedState {
   groups: ProjectedGroupState[];
   contacts: ProjectedContactState[];
+  currentTaskRoutes: Array<{
+    id: string;
+    points: Array<[number, number]>;
+  }>;
+  plannedTaskRoutes: Array<{
+    id: string;
+    points: Array<[number, number]>;
+  }>;
   lastTickTime: number | null;
   nextTickTime: number | null;
+}
+
+export interface TaskRouteSummary {
+  id?: string;
+  name?: string;
+  type?: string;
+  destination?: [number, number] | [number, number, number] | null;
+  waypoints?: Array<[number, number] | [number, number, number]>;
+}
+
+export interface PlanGroupRouteSummary {
+  groupId?: string;
+  clearQueue?: boolean;
+  immediateTask?: TaskRouteSummary | null;
+  queuedTasks?: TaskRouteSummary[];
+}
+
+export interface PlanSummary {
+  groups?: PlanGroupRouteSummary[];
 }
 
 export interface SessionManifest {

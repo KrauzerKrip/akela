@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type JSX } from "react";
+import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import "ol/ol.css";
 import Map from "ol/Map";
 import View from "ol/View";
@@ -57,8 +57,12 @@ const ENEMY_STYLE = new Style({
     stroke: new Stroke({ color: "#fee2e2", width: 1 }),
   }),
 });
-const ARROW_STYLE = new Style({
-  stroke: new Stroke({ color: "#f59e0b", width: 2, lineDash: [6, 4] }),
+const CURRENT_TASK_ROUTE_STYLE = new Style({
+  stroke: new Stroke({ color: "#f59e0b", width: 2.5 }),
+});
+
+const PLANNED_TASK_ROUTE_STYLE = new Style({
+  stroke: new Stroke({ color: "#f97316", width: 2, lineDash: [6, 5] }),
 });
 
 type CropBox = { x1: number; y1: number; x2: number; y2: number };
@@ -66,6 +70,60 @@ type CropExtent = [number, number, number, number];
 
 function cropToExtent(crop: CropBox): CropExtent {
   return [crop.x1, crop.y1, crop.x2, crop.y2];
+}
+
+function extentToCrop(extent: CropExtent): CropBox {
+  return { x1: extent[0], y1: extent[1], x2: extent[2], y2: extent[3] };
+}
+
+function getAspectRatioAdjustedExtent(crop: CropBox, imageWidth: number, imageHeight: number): CropExtent {
+  const targetWidth = crop.x2 - crop.x1;
+  const targetHeight = crop.y2 - crop.y1;
+  const imageAspect = imageWidth / imageHeight;
+  const targetAspect = targetWidth / targetHeight;
+
+  if (!Number.isFinite(imageAspect) || imageAspect <= 0 || Math.abs(imageAspect - targetAspect) < 1e-6) {
+    return cropToExtent(crop);
+  }
+
+  const centerY = (crop.y1 + crop.y2) / 2;
+  const adjustedHeight = targetWidth / imageAspect;
+  const halfHeight = adjustedHeight / 2;
+  return [crop.x1, centerY - halfHeight, crop.x2, centerY + halfHeight];
+}
+
+function loadImageDimensions(url: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+        resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        return;
+      }
+      resolve(null);
+    };
+    image.onerror = () => resolve(null);
+    image.src = url;
+  });
+}
+
+function remapPointToDisplayCrop(
+  point: [number, number],
+  sourceCrop: CropBox,
+  displayCrop: CropBox,
+): [number, number] {
+  const sourceWidth = sourceCrop.x2 - sourceCrop.x1;
+  const sourceHeight = sourceCrop.y2 - sourceCrop.y1;
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    return point;
+  }
+
+  const xRatio = (point[0] - sourceCrop.x1) / sourceWidth;
+  const yRatio = (point[1] - sourceCrop.y1) / sourceHeight;
+  return [
+    displayCrop.x1 + xRatio * (displayCrop.x2 - displayCrop.x1),
+    displayCrop.y1 + yRatio * (displayCrop.y2 - displayCrop.y1),
+  ];
 }
 
 function constrainViewToCrop(map: Map, crop: CropBox, resetView: boolean): void {
@@ -163,6 +221,8 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
   const imageLayerRef = useRef<ImageLayer<ImageStatic> | null>(null);
   const vectorSourceRef = useRef(new VectorSource());
   const desiredCropRef = useRef<CropBox | null>(null);
+  const displayCropRef = useRef<CropBox | null>(null);
+  const [displayCrop, setDisplayCrop] = useState<CropBox | null>(null);
   const setLoadingMap = useWarRoomStore((state) => state.setLoadingMap);
   const loadingMap = useWarRoomStore((state) => state.loadingMap);
 
@@ -188,6 +248,10 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
   useEffect(() => {
     desiredCropRef.current = desiredCrop;
   }, [desiredCrop]);
+
+  useEffect(() => {
+    displayCropRef.current = displayCrop;
+  }, [displayCrop]);
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) {
@@ -237,7 +301,7 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
       el &&
       new ResizeObserver(() => {
         map.updateSize();
-        const crop = desiredCropRef.current;
+        const crop = displayCropRef.current ?? desiredCropRef.current;
         if (crop) {
           constrainViewToCrop(map, crop, false);
         }
@@ -257,29 +321,56 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
 
   useEffect(() => {
     if (!mapInstance.current || !desiredCrop) {
+      setDisplayCrop(null);
       setLoadingMap(false);
       return;
     }
 
+    let cancelled = false;
+    const cropForRequest = desiredCrop;
+    const map = mapInstance.current;
+
     setLoadingMap(true);
-    const source = new ImageStatic({
-      url: getMapCropUrl(worldName, desiredCrop),
-      projection: PROJECTION,
-      imageExtent: [desiredCrop.x1, desiredCrop.y1, desiredCrop.x2, desiredCrop.y2],
-    });
+    const mapUrl = getMapCropUrl(worldName, cropForRequest);
 
-    source.on("imageloadstart", () => setLoadingMap(true));
-    source.on("imageloadend", () => setLoadingMap(false));
-    source.on("imageloaderror", () => setLoadingMap(false));
+    const updateSource = async () => {
+      const dimensions = await loadImageDimensions(mapUrl);
+      if (cancelled) {
+        return;
+      }
 
-    if (!imageLayerRef.current) {
-      imageLayerRef.current = new ImageLayer({ source, zIndex: 1 });
-      mapInstance.current.getLayers().insertAt(0, imageLayerRef.current);
-    } else {
-      imageLayerRef.current.setSource(source);
-    }
-    mapInstance.current.updateSize();
-    constrainViewToCrop(mapInstance.current, desiredCrop, true);
+      const imageExtent = dimensions
+        ? getAspectRatioAdjustedExtent(cropForRequest, dimensions.width, dimensions.height)
+        : cropToExtent(cropForRequest);
+      const nextDisplayCrop = extentToCrop(imageExtent);
+      setDisplayCrop(nextDisplayCrop);
+
+      const source = new ImageStatic({
+        url: mapUrl,
+        projection: PROJECTION,
+        imageExtent,
+      });
+
+      source.on("imageloadstart", () => setLoadingMap(true));
+      source.on("imageloadend", () => setLoadingMap(false));
+      source.on("imageloaderror", () => setLoadingMap(false));
+
+      if (!imageLayerRef.current) {
+        imageLayerRef.current = new ImageLayer({ source, zIndex: 1 });
+        map.getLayers().insertAt(0, imageLayerRef.current);
+      } else {
+        imageLayerRef.current.setSource(source);
+      }
+
+      map.updateSize();
+      constrainViewToCrop(map, nextDisplayCrop, true);
+    };
+
+    void updateSource();
+
+    return () => {
+      cancelled = true;
+    };
   }, [desiredCrop, setLoadingMap, worldName]);
 
   useEffect(() => {
@@ -287,11 +378,29 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
       vectorSourceRef.current.clear();
       return;
     }
+    if (!desiredCrop || !displayCrop) {
+      return;
+    }
     const source = vectorSourceRef.current;
     source.clear();
 
+    const remap = (point: [number, number]) =>
+      remapPointToDisplayCrop(point, desiredCrop, displayCrop);
+
+    const remappedWorkingArea = {
+      x1: remapPointToDisplayCrop([workingArea.x1, workingArea.y1], desiredCrop, displayCrop)[0],
+      y1: remapPointToDisplayCrop([workingArea.x1, workingArea.y1], desiredCrop, displayCrop)[1],
+      x2: remapPointToDisplayCrop([workingArea.x2, workingArea.y2], desiredCrop, displayCrop)[0],
+      y2: remapPointToDisplayCrop([workingArea.x2, workingArea.y2], desiredCrop, displayCrop)[1],
+    };
+
     const areaPolygon = new Feature({
-      geometry: polygonFromExtent([workingArea.x1, workingArea.y1, workingArea.x2, workingArea.y2]),
+      geometry: polygonFromExtent([
+        remappedWorkingArea.x1,
+        remappedWorkingArea.y1,
+        remappedWorkingArea.x2,
+        remappedWorkingArea.y2,
+      ]),
     });
     areaPolygon.setStyle(
       new Style({
@@ -302,28 +411,51 @@ export function WarMap({ projectedState, manifest }: WarMapProps): JSX.Element {
 
     projectedState.groups.forEach((group) => {
       const feature = new Feature({
-        geometry: new Point(group.position),
+        geometry: new Point(remap(group.position)),
       });
       feature.setStyle(FRIEND_STYLE);
       source.addFeature(feature);
 
-      if (group.taskDestination) {
-        const arrow = new Feature({
-          geometry: new LineString([group.position, group.taskDestination]),
-        });
-        arrow.setStyle(ARROW_STYLE);
-        source.addFeature(arrow);
+    });
+
+    projectedState.currentTaskRoutes.forEach((route) => {
+      if (route.points.length < 2) {
+        return;
       }
+      const arrow = new Feature({
+        geometry: new LineString(route.points.map(remap)),
+      });
+      arrow.setStyle(CURRENT_TASK_ROUTE_STYLE);
+      source.addFeature(arrow);
+    });
+
+    projectedState.plannedTaskRoutes.forEach((route) => {
+      if (route.points.length < 2) {
+        return;
+      }
+      const arrow = new Feature({
+        geometry: new LineString(route.points.map(remap)),
+      });
+      arrow.setStyle(PLANNED_TASK_ROUTE_STYLE);
+      source.addFeature(arrow);
     });
 
     projectedState.contacts.forEach((contact) => {
       const feature = new Feature({
-        geometry: new Point(contact.position),
+        geometry: new Point(remap(contact.position)),
       });
       feature.setStyle(ENEMY_STYLE);
       source.addFeature(feature);
     });
-  }, [projectedState.contacts, projectedState.groups, workingArea]);
+  }, [
+    projectedState.contacts,
+    projectedState.currentTaskRoutes,
+    projectedState.groups,
+    projectedState.plannedTaskRoutes,
+    desiredCrop,
+    displayCrop,
+    workingArea,
+  ]);
 
   return (
     <section className="relative h-full min-h-0 border-r border-zinc-800 bg-zinc-900">
