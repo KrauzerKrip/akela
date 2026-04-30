@@ -530,7 +530,7 @@ export class WaitTask extends Task {
         console.log(`[WAIT] ${group.getName()}: waiting now`);
         return new Promise((resolve) => {
             const completionListener = (event: GroupEvent) => {
-                if (event.source === "GAME" && event.type === "SIGNAL") {
+                if (event.type === "SIGNAL") {
                     const signalEvent = event as SignalEvent;
 
                     if (signalEvent.signal.id === this.signalToWaitFor.id) {
@@ -578,7 +578,7 @@ export class Embark extends Task {
         // Return a Promise that resolves when the domain event fires
         return new Promise((resolve) => {
             const completionListener = (event: GroupEvent) => {
-                if (event.source === "GAME" && event.type === "EmbarkingCompleteEvent") {
+                if (event.source === "GAME" && event.type === "EMBARKING_COMPLETE") {
                     const ecEvent = event as EmbarkingCompleteEvent;
 
                     if (ecEvent.vehicleId === this.vehicle.id && ecEvent.status === "Complete") {
@@ -774,6 +774,7 @@ export class Group {
 
     public async executeImmediately(task: Task) {
         const runImmediateTask = async () => {
+            this.cancelActiveTask();
             const generationAtStart = this.bumpExecutionGeneration();
             this.activeTask = task;
             this.emitDomainEvent({ type: "TASK_STARTED", groupId: this.id, task: task } as TaskStartedEvent);
@@ -813,9 +814,9 @@ export class Group {
     }
 
     public clearTasks() {
+        this.cancelActiveTask();
         this.bumpExecutionGeneration();
         this.taskQueue = [];
-        this.activeTask = null;
         //TODO: Logic to stop current group movement in Arma (e.g. doStop)
     }
 
@@ -914,6 +915,10 @@ export class Group {
     private bumpExecutionGeneration(): number {
         this.executionGeneration += 1;
         return this.executionGeneration;
+    }
+
+    private cancelActiveTask() {
+        this.activeTask = null;
     }
 
     public async updateSituationalData() {

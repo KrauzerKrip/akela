@@ -38,8 +38,8 @@ All tasks inherit from a base class and support `.on(Event, callback)` and `.sig
 Every group (e.g., `groups["Alpha"]`) has access to the following methods:
 * `.on(Event, (event, group) => { ... })`: Attaches a persistent, group-wide reaction that remains active for the whole plan period, including when the group has no current task. Supports chaining.
 * `.enqueue(task)`: Adds a task to the end of the group's current queue.
-* `.executeImmediately(task)`: Clears the current queue and starts the provided task instantly.
-* `.executeAndClearQueue(task)`: Alias for immediate override.
+* `.executeImmediately(task)`: Preempts the currently active task and starts the provided task immediately. Existing queued tasks remain unless explicitly cleared.
+* `.executeAndClearQueue(task)`: Clears queued tasks, preempts the active task, and starts the provided task immediately.
 * `.getCasualties()`: Returns the total number of dead units in the group.
 * `.getCasualtyRatio()`: Returns a float (0.0 to 1.0) representing percentage of the group lost.
 * `.getVehiclesByName(name)`: Returns an array of vehicles, i.e [{id: "someid", name: "B_LSV_01_AT_F"}]. Can be used with Embark task, e.g. `new Embark(groups["Alpha"].getVehiclesByName("B_LSV_01_AT_F")[0], "Bravo embarking Alpha's vehicle")`
