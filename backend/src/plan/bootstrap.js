@@ -12,7 +12,10 @@ class Task {
         this.completionSignal = null;
     }
     on(event, callback) {
-        this.reactions[event] = callback;
+        this.reactions[event] = {
+            callback,
+            __source: typeof callback === "function" ? callback.toString() : null
+        };
         return this;
     }
     assign(group) {

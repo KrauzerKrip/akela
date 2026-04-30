@@ -1,5 +1,6 @@
 import { PlanSandbox } from "./sandbox";
 import { Army, Group, GameExecutor, Waypoint, Unit, Loadout } from "../army";
+import { Session } from "../session";
 import { strict as assert } from "assert";
 
 class DummyExecutor implements GameExecutor {
@@ -32,9 +33,10 @@ class DummyExecutor implements GameExecutor {
 
 async function setupArmy() {
     const executor = new DummyExecutor();
+    const session = new Session("/tmp/akela-test-sessions");
     const army = new Army("BLUFOR");
-    const alpha = new Group("alpha-id", "Alpha", executor);
-    const bravo = new Group("bravo-id", "Bravo", executor);
+    const alpha = new Group("alpha-id", "Alpha", session, executor);
+    const bravo = new Group("bravo-id", "Bravo", session, executor);
 
     for (let i = 0; i < 4; i++) {
         const unitA = new Unit(`unitA_${i}_id`, `Unit Alpha ${i}`, {
@@ -96,7 +98,7 @@ groups["Alpha"]
   );
 `;
     const initialPlan = await sandbox.makePlan(army, code);
-    await alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
+    void alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const reactionPlan = sandbox.handlePlanEvent(alpha, { type: "KIA" });
@@ -121,7 +123,7 @@ groups["Alpha"]
   );
 `;
     const initialPlan = await sandbox.makePlan(army, code);
-    await alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
+    void alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const reactionPlan = sandbox.handlePlanEvent(alpha, { type: "KIA" });
@@ -175,7 +177,7 @@ groups["Alpha"]
   );
 `;
     const initialPlan = await sandbox.makePlan(army, initialCode);
-    await alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
+    void alpha.executeImmediately(initialPlan.immediateTasks[alpha.id]);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const additionalCode = `

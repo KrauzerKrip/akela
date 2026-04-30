@@ -112,10 +112,32 @@ export function translateToPlanGroup(plan: Plan, group: Group): PlanGroup {
       return vehicles;
     },
     on(event: string, callback: any) {
-      groupReactions[event] = callback;
-      plan.groupReactions[group.id][event] = callback;
+      const normalizedReaction = normalizeReaction(callback);
+      groupReactions[event] = normalizedReaction;
+      plan.groupReactions[group.id][event] = normalizedReaction;
       return this; // Allows chaining: group.on().on()
     },
+  };
+}
+
+function normalizeReaction(reaction: any): any {
+  if (reaction && typeof reaction === "object" && ("callback" in reaction || "__source" in reaction || "source" in reaction)) {
+    return {
+      callback: (reaction as any).callback ?? null,
+      __source: (reaction as any).__source ?? (reaction as any).source ?? null,
+    };
+  }
+
+  if (typeof reaction === "function") {
+    return {
+      callback: reaction,
+      __source: null,
+    };
+  }
+
+  return {
+    callback: null,
+    __source: null,
   };
 }
 

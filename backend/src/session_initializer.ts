@@ -256,7 +256,11 @@ export class SessionInitializer {
                 groups.forEach((group) => {
                     group.subscribe(async (event: GroupEvent) => {
                         if (event.type === "TASK_COMPLETED") {
-                            const taskName = (event as TaskCompletedEvent).task.name;
+                            const completedTask = (event as TaskCompletedEvent).task;
+                            if (!completedTask) {
+                                return;
+                            }
+                            const taskName = completedTask.name;
                             const planEvent = { type: "TASK_COMPLETE" as const, taskName };
                             const newPlan = planSandbox.handlePlanEvent(group, planEvent);
                             if (newPlan) {
@@ -302,16 +306,16 @@ export class SessionInitializer {
     private async actAccordingToPlan(plan: Plan, army: Army): Promise<void> {
         const armyGroups = army.getGroups();
         for (const group of armyGroups) {
-            if (plan.queuedTasks?.[group.id]) {
-                plan.queuedTasks[group.id].forEach((task) => {
-                    group.addTaskToQueue(task);
-                });
+            if (plan.clearGroupTasks?.[group.id]) {
+                group.clearTasks();
             }
             if (plan.immediateTasks?.[group.id]) {
                 void group.executeImmediately(plan.immediateTasks[group.id]);
             }
-            if (plan.clearGroupTasks?.[group.id]) {
-                group.clearTasks();
+            if (plan.queuedTasks?.[group.id]) {
+                plan.queuedTasks[group.id].forEach((task) => {
+                    group.addTaskToQueue(task);
+                });
             }
         }
         await new Promise((resolve) => setTimeout(resolve, 0));

@@ -17,8 +17,8 @@ export interface MakePlanOptions {
 export class PlanSandbox {
     private quickJS: any;
     private arena: Arena;
-    private taskReactions = new Map<string, Record<string, any>>();
-    private groupReactions = new Map<string, Record<string, any>>();
+    private taskReactions = new Map<string, Record<string, StoredReaction>>();
+    private groupReactions = new Map<string, Record<string, StoredReaction>>();
 
     private constructor(quickJS: any, arena: Arena) {
         this.quickJS = quickJS;
@@ -53,6 +53,8 @@ export class PlanSandbox {
         if (clearReactions) {
             this.taskReactions.clear();
             this.groupReactions.clear();
+        } else {
+            this.rehydrateStoredReactions();
         }
     }
 
@@ -80,6 +82,22 @@ export class PlanSandbox {
             generateUuid: uuidv4,
             log: console.log,
         });
+        this.arena.evalCode(`
+            for (const groupName of Object.keys(groups || {})) {
+                const group = groups[groupName];
+                if (!group || group.__akelaWrappedOn) {
+                    continue;
+                }
+                const originalOn = group.on.bind(group);
+                group.on = (event, callback) => {
+                    return originalOn(event, {
+                        callback,
+                        __source: typeof callback === "function" ? callback.toString() : null
+                    });
+                };
+                group.__akelaWrappedOn = true;
+            }
+        `);
 
         try {
             this.arena.evalCode(code);
@@ -109,9 +127,19 @@ export class PlanSandbox {
             console.log(`[Sandbox] No current task for group ${group.id}`);
         }
 
-        const jsCallback = taskReactions?.[event.type] ?? groupReactions?.[event.type];
-        if (!jsCallback) {
+        const taskReactionEntry = taskReactions?.[event.type];
+        const groupReactionEntry = groupReactions?.[event.type];
+        const reactionEntry = taskReactionEntry ?? groupReactionEntry;
+        if (!reactionEntry) {
             console.log(`[Sandbox] No callback found for event ${event.type} (task override semantics).`);
+            return null;
+        }
+
+        const callbackScope = taskReactionEntry ? "task" : "group";
+        const callbackOwnerId = taskReactionEntry && currentTask ? currentTask.id : group.id;
+        const jsCallback = this.getLiveCallback(reactionEntry, callbackScope, callbackOwnerId, event.type);
+        if (!jsCallback) {
+            this.deleteReactionEntry(callbackScope, callbackOwnerId, event.type);
             return null;
         }
 
@@ -131,6 +159,12 @@ export class PlanSandbox {
             return plan;
         } catch (err) {
             console.error(`[Sandbox] Callback error on event ${event.type}:`, err);
+            if (this.isReactionLifetimeError(err)) {
+                console.warn(
+                    `[Sandbox] Dropping stale ${callbackScope} reaction owner=${callbackOwnerId}, event=${event.type}.`,
+                );
+                this.deleteReactionEntry(callbackScope, callbackOwnerId, event.type);
+            }
         }
 
         return null;
@@ -143,9 +177,9 @@ export class PlanSandbox {
                 this.taskReactions.set(taskId, {});
             }
 
-            const reactions = this.taskReactions.get(taskId) as Record<string, any>;
+            const reactions = this.taskReactions.get(taskId) as Record<string, StoredReaction>;
             for (const [eventId, planReaction] of Object.entries(planReactions)) {
-                reactions[eventId] = planReaction;
+                reactions[eventId] = this.createStoredReaction(planReaction, "task", taskId, eventId);
                 console.log(`[Sandbox] ${source}: set task reaction taskId=${taskId}, eventId=${eventId}`);
             }
         }
@@ -158,9 +192,9 @@ export class PlanSandbox {
                 this.groupReactions.set(groupId, {});
             }
 
-            const reactions = this.groupReactions.get(groupId) as Record<string, any>;
+            const reactions = this.groupReactions.get(groupId) as Record<string, StoredReaction>;
             for (const [eventId, planReaction] of Object.entries(planReactions)) {
-                reactions[eventId] = planReaction;
+                reactions[eventId] = this.createStoredReaction(planReaction, "group", groupId, eventId);
                 console.log(`[Sandbox] ${source}: set group reaction groupId=${groupId}, eventId=${eventId}`);
             }
         }
@@ -182,8 +216,137 @@ export class PlanSandbox {
         }
     }
 
+    private createStoredReaction(
+        callbackOrDescriptor: any,
+        scope: "task" | "group",
+        ownerId: string,
+        eventId: string,
+    ): StoredReaction {
+        const callback = this.extractReactionCallback(callbackOrDescriptor);
+        const explicitSource = this.extractReactionSourceField(callbackOrDescriptor);
+        return {
+            callback: typeof callback === "function" ? callback : null,
+            source: explicitSource ?? this.extractCallbackSource(callback, scope, ownerId, eventId),
+        };
+    }
+
+    private extractReactionCallback(callbackOrDescriptor: any): any {
+        if (callbackOrDescriptor && typeof callbackOrDescriptor === "object" && "callback" in callbackOrDescriptor) {
+            return callbackOrDescriptor.callback;
+        }
+        return callbackOrDescriptor;
+    }
+
+    private extractReactionSourceField(callbackOrDescriptor: any): string | null {
+        if (!callbackOrDescriptor || typeof callbackOrDescriptor !== "object") {
+            return null;
+        }
+        if (typeof callbackOrDescriptor.__source === "string" && callbackOrDescriptor.__source.trim().length > 0) {
+            return callbackOrDescriptor.__source;
+        }
+        if (typeof callbackOrDescriptor.source === "string" && callbackOrDescriptor.source.trim().length > 0) {
+            return callbackOrDescriptor.source;
+        }
+        return null;
+    }
+
+    private extractCallbackSource(
+        callback: any,
+        scope: "task" | "group",
+        ownerId: string,
+        eventId: string,
+    ): string | null {
+        if (typeof callback !== "function") {
+            console.warn(`[Sandbox] Cannot persist non-function ${scope} reaction owner=${ownerId}, event=${eventId}.`);
+            return null;
+        }
+        try {
+            const source = callback.toString().trim();
+            if (!source || source.includes("[native code]")) {
+                console.warn(`[Sandbox] Cannot serialize ${scope} reaction owner=${ownerId}, event=${eventId}.`);
+                return null;
+            }
+            return source;
+        } catch (err) {
+            console.warn(`[Sandbox] Failed extracting callback source for ${scope} owner=${ownerId}, event=${eventId}:`, err);
+            return null;
+        }
+    }
+
+    private getLiveCallback(
+        entry: StoredReaction,
+        scope: "task" | "group",
+        ownerId: string,
+        eventId: string,
+    ): ((event: PlanEvent, group: PlanGroup) => void) | null {
+        if (typeof entry.callback === "function") {
+            return entry.callback;
+        }
+        if (!entry.source) {
+            console.warn(`[Sandbox] Missing callback source for ${scope} reaction owner=${ownerId}, event=${eventId}.`);
+            return null;
+        }
+        try {
+            const rehydrated = this.arena.evalCode(`(${entry.source})`);
+            if (typeof rehydrated !== "function") {
+                console.warn(`[Sandbox] Rehydrated ${scope} reaction is not callable owner=${ownerId}, event=${eventId}.`);
+                return null;
+            }
+            entry.callback = rehydrated;
+            return rehydrated;
+        } catch (err) {
+            console.warn(`[Sandbox] Failed to rehydrate ${scope} reaction owner=${ownerId}, event=${eventId}:`, err);
+            return null;
+        }
+    }
+
+    private rehydrateStoredReactions() {
+        for (const [taskId, reactions] of this.taskReactions.entries()) {
+            for (const [eventId, entry] of Object.entries(reactions)) {
+                entry.callback = null;
+                const callback = this.getLiveCallback(entry, "task", taskId, eventId);
+                if (!callback) {
+                    delete reactions[eventId];
+                }
+            }
+        }
+        for (const [groupId, reactions] of this.groupReactions.entries()) {
+            for (const [eventId, entry] of Object.entries(reactions)) {
+                entry.callback = null;
+                const callback = this.getLiveCallback(entry, "group", groupId, eventId);
+                if (!callback) {
+                    delete reactions[eventId];
+                }
+            }
+        }
+    }
+
+    private deleteReactionEntry(scope: "task" | "group", ownerId: string, eventId: string) {
+        const reactionMap = scope === "task" ? this.taskReactions : this.groupReactions;
+        const reactions = reactionMap.get(ownerId);
+        if (!reactions) {
+            return;
+        }
+        delete reactions[eventId];
+        if (Object.keys(reactions).length === 0) {
+            reactionMap.delete(ownerId);
+        }
+    }
+
+    private isReactionLifetimeError(err: unknown): boolean {
+        const message = err instanceof Error ? err.message : String(err);
+        return message.includes("QuickJSUseAfterFree")
+            || message.includes("Lifetime not alive")
+            || message.includes("use-after-free");
+    }
+
 
     public dispose() {
         this.arena.dispose();
     }
+}
+
+interface StoredReaction {
+    source: string | null;
+    callback: any;
 }
