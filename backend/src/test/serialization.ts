@@ -46,6 +46,10 @@ export class MockGameExecutor implements GameExecutor {
     async setFormation(group: Group, formation: string) { }
     async addGroupEventHandlers(group: Group) { }
     async getGroupLeaderPosition(group: Group): Promise<Point3D | null> { return null; }
+    async commandLoad(group: Group, vehicle: Vehicle) { }
+    async commandUnload(group: Group) { }
+    async stopGroup(group: Group) { }
+    async clearGroupWaypoints(group: Group) { }
 }
 
 export class MockGameEventDispatcher implements GameEventDispatcher {
@@ -55,11 +59,12 @@ export class MockGameEventDispatcher implements GameEventDispatcher {
 export function deserializeArmy(data: any): Army {
     const executor = new MockGameExecutor();
     const dispatcher = new MockGameEventDispatcher();
+    const session = { getId: () => "test-session" } as any;
 
     const army = new Army(data.side);
 
     for (const gData of data.groups) {
-        const group = new Group(gData.id, gData.name, executor);
+        const group = new Group(gData.id, gData.name, session, executor);
         if (gData.position) {
             (group as any).position = gData.position;
         }

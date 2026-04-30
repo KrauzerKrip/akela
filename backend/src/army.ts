@@ -129,6 +129,8 @@ export interface GameExecutor {
     getGroupLeaderPosition(group: Group): Promise<Point3D | null>;
     commandLoad(group: Group, vehicle: Vehicle): Promise<void>;
     commandUnload(group: Group): Promise<void>;
+    stopGroup(group: Group): Promise<void>;
+    clearGroupWaypoints(group: Group): Promise<void>;
 }
 
 export interface GameEventDispatcher {
@@ -250,6 +252,10 @@ class WaypointList {
             return false;
         }
     }
+
+    public clear(): void {
+        this.head = null;
+    }
 }
 
 export interface Stance {
@@ -263,6 +269,7 @@ export class Task {
     public readonly name: string;
     private signal: Signal | null;
     public async execute(group: Group, executor: GameExecutor): Promise<void> { }
+    public async cancel(group: Group, executor: GameExecutor): Promise<void> { }
 
     constructor(id: string, type: string, name: string) {
         this.id = id;
@@ -323,6 +330,11 @@ export class Push extends Task {
 
             group.subscribe(completionListener);
         });
+    }
+
+    public async cancel(group: Group, executor: GameExecutor): Promise<void> {
+        await executor.clearGroupWaypoints(group);
+        group.clearWaypoints();
     }
 
     public getFinalWaypointPosition(): Point {
@@ -388,6 +400,11 @@ export class Assault extends Task {
         });
     }
 
+    public async cancel(group: Group, executor: GameExecutor): Promise<void> {
+        await executor.clearGroupWaypoints(group);
+        group.clearWaypoints();
+    }
+
     public getFinalWaypointPosition(): Point {
         return this.waypoints[this.waypoints.length - 1].position;
     }
@@ -445,6 +462,11 @@ export class Retreat extends Task {
 
             group.subscribe(completionListener);
         });
+    }
+
+    public async cancel(group: Group, executor: GameExecutor): Promise<void> {
+        await executor.clearGroupWaypoints(group);
+        group.clearWaypoints();
     }
 
     public getFinalWaypointPosition(): Point {
@@ -757,6 +779,11 @@ export class Group {
         this.waypointList.insertInEnd(waypoint);
     }
 
+    public clearWaypoints() {
+        this.waypointById = {};
+        this.waypointList.clear();
+    }
+
     public addTaskToQueue(task: Task) {
         this.emitDomainEvent({ type: "ORDER_QUEUED", groupId: this.id, task: task } as OrderQueuedEvent);
         this.taskQueue.push(task);
@@ -774,7 +801,7 @@ export class Group {
 
     public async executeImmediately(task: Task) {
         const runImmediateTask = async () => {
-            this.cancelActiveTask();
+            await this.cancelActiveTask();
             const generationAtStart = this.bumpExecutionGeneration();
             this.activeTask = task;
             this.emitDomainEvent({ type: "TASK_STARTED", groupId: this.id, task: task } as TaskStartedEvent);
@@ -813,11 +840,10 @@ export class Group {
         await this.immediateExecutionChain;
     }
 
-    public clearTasks() {
-        this.cancelActiveTask();
+    public async clearTasks() {
+        await this.cancelActiveTask();
         this.bumpExecutionGeneration();
         this.taskQueue = [];
-        //TODO: Logic to stop current group movement in Arma (e.g. doStop)
     }
 
     public addUnit(unit: Unit) {
@@ -917,8 +943,17 @@ export class Group {
         return this.executionGeneration;
     }
 
-    private cancelActiveTask() {
+    private async cancelActiveTask() {
+        const taskToCancel = this.activeTask;
         this.activeTask = null;
+        if (!taskToCancel) {
+            return;
+        }
+        try {
+            await taskToCancel.cancel(this, this.executor);
+        } catch (error) {
+            console.error(`[Group ${this.getName()}] Active task cancellation failed (${taskToCancel.type}:${taskToCancel.name}):`, error);
+        }
     }
 
     public async updateSituationalData() {

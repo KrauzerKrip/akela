@@ -1,10 +1,11 @@
 import { PlanSandbox } from "./sandbox";
-import { Army, Group, GameExecutor, Waypoint, Unit, Loadout } from "../army";
+import { Army, Group, GameExecutor, Waypoint, Unit, Loadout, Vehicle, GroupBuilder } from "../army";
+import { Point3D } from "../geography";
 import { Session } from "../session";
 import { strict as assert } from "assert";
 
 class DummyExecutor implements GameExecutor {
-    getGroupBuilders(side: string): Promise<Group[]> {
+    getGroupBuilders(side: string): Promise<GroupBuilder[]> {
         throw new Error("Method not implemented.");
     }
     getGroupUnits(group: Group): Promise<Unit[]> {
@@ -19,6 +20,9 @@ class DummyExecutor implements GameExecutor {
     addGroupEventHandlers(group: Group): Promise<void> {
         throw new Error("Method not implemented.");
     }
+    getGroupLeaderPosition(group: Group): Promise<Point3D | null> {
+        throw new Error("Method not implemented.");
+    }
     async addWaypoint(group: Group, waypoint: Waypoint) {
         console.log(`[Executor] addWaypoint to ${group.getName()}: (${waypoint.position.x}, ${waypoint.position.y})`);
     }
@@ -29,6 +33,10 @@ class DummyExecutor implements GameExecutor {
     async setCombatBehaviour(group: Group, behaviour: string) { }
     async setGroupId(group: Group, name: string) { }
     async setFormation(group: Group, formation: string) { }
+    async commandLoad(group: Group, vehicle: Vehicle) { }
+    async commandUnload(group: Group) { }
+    async stopGroup(group: Group) { }
+    async clearGroupWaypoints(group: Group) { }
 }
 
 async function setupArmy() {

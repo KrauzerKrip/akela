@@ -1,5 +1,5 @@
 import { PlanSandbox } from "./sandbox";
-import { Army, Group, GameExecutor, Waypoint, Unit, Loadout } from "../army";
+import { Army, Group, GameExecutor, Waypoint, Unit, Loadout, Vehicle, GroupBuilder } from "../army";
 import * as fs from "fs";
 import * as path from "path";
 import { Canvas, createCanvas } from "@napi-rs/canvas";
@@ -8,7 +8,7 @@ import { Session } from "../session";
 import { GameMapArea, Point, Point3D } from "../geography";
 
 class DummyExecutor implements GameExecutor {
-    getGroupBuilders(side: string): Promise<Group[]> { throw new Error("Method not implemented."); }
+    getGroupBuilders(side: string): Promise<GroupBuilder[]> { throw new Error("Method not implemented."); }
     getGroupUnits(group: Group): Promise<Unit[]> { throw new Error("Method not implemented."); }
     getUnitLoadout(unit: Unit): Promise<Loadout> { throw new Error("Method not implemented."); }
     getWaypoints(group: Group): Promise<Waypoint[]> { throw new Error("Method not implemented."); }
@@ -20,6 +20,10 @@ class DummyExecutor implements GameExecutor {
     async setCombatBehaviour(group: Group, behaviour: string) { }
     async setGroupId(group: Group, name: string) { }
     async setFormation(group: Group, formation: string) { }
+    async commandLoad(group: Group, vehicle: Vehicle) { }
+    async commandUnload(group: Group) { }
+    async stopGroup(group: Group) { }
+    async clearGroupWaypoints(group: Group) { }
 }
 
 async function test() {

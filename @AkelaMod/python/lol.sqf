@@ -284,6 +284,41 @@ scriptName "Pythia_Polling_Loop";
                         };
                     };
 
+                    case "stopGroup": {
+                        private _grp = groupFromNetId _queryArg;
+                        if (!isNull _grp) then {
+                            {
+                                if (alive _x) then {
+                                    doStop _x;
+                                };
+                            } forEach units _grp;
+                            _queryResult = true;
+                        } else {
+                            _queryResult = ["error", "Group not found"];
+                        };
+                    };
+
+                    case "clearGroupWaypoints": {
+                        private _grp = groupFromNetId _queryArg;
+                        if (!isNull _grp) then {
+                            _grp spawn {
+                                params ["_groupToStop"];
+                                private _groupUnits = units _groupToStop;
+                                if ((count _groupUnits) > 0) then {
+                                    [_groupToStop, currentWaypoint _groupToStop] setWaypointPosition [getPosASL (_groupUnits select 0), -1];
+                                    sleep 0.1;
+                                };
+
+                                for "_i" from (count waypoints _groupToStop) - 1 to 0 step -1 do {
+                                    deleteWaypoint [_groupToStop, _i];
+                                };
+                            };
+                            _queryResult = true;
+                        } else {
+                            _queryResult = ["error", "Group not found or is null"];
+                        };
+                    };
+
                     case "addEventHandlers": {
                         private _grp = groupFromNetId _queryArg;
                         if (!isNull _grp) then {

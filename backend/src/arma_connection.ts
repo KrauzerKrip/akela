@@ -1,4 +1,4 @@
-import { Group, Task, Unit, Waypoint, GameEventDispatcher, BaseEvent, EngineGroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle, EmbarkingCompleteEvent, GroupBuilder } from "./army";
+import { Group, Task, Unit, Waypoint, GameEventDispatcher, EngineGroupEvent, UnitKilledEvent, EnemyDetectedEvent, WaypointCompleteEvent, CombatModeChangedEvent, Loadout, Weapon, Vehicle, EmbarkingCompleteEvent, GroupBuilder } from "./army";
 import { GameExecutor } from "./army";
 import { Point, Point3D } from "./geography";
 import { sendArmaRequest } from "./server";
@@ -400,6 +400,21 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
         }
     }
 
+    public async stopGroup(group: Group): Promise<void> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            await sendArmaRequest([["stopGroup", armaGroupNetId]]);
+        }
+    }
+
+    public async clearGroupWaypoints(group: Group): Promise<void> {
+        const armaGroupNetId = this.getArmaGroupNetId(group.id);
+        if (armaGroupNetId !== undefined) {
+            await sendArmaRequest([["clearGroupWaypoints", armaGroupNetId]]);
+            this.clearArmaWaypointMappingsForGroup(armaGroupNetId);
+        }
+    }
+
     public async getGroupAssignedVehicles(group: Group): Promise<Vehicle[]> {
         const data = await this.getGroupAssignedArmaVehicles(group);
         const vehicles: Vehicle[] = [];
@@ -435,6 +450,15 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
     public async executeTask(task: Task) {
         // double-dispatch!!!
         task.execute(this as any, this);
+    }
+
+    private clearArmaWaypointMappingsForGroup(groupNetId: NetId): void {
+        for (const [key, waypointId] of Object.entries(this.waypointIds)) {
+            if (key.startsWith(`${groupNetId}-`)) {
+                delete this.waypointIds[key as CompositeWaypointKey];
+                delete this.armaWaypoints[waypointId];
+            }
+        }
     }
 
     public async getArmaWaypoints(group: Group): Promise<ArmaWaypoint[]> {

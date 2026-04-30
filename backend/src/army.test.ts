@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import {
+    Assault,
     Embark,
     GameExecutor,
     Group,
     GroupEvent,
+    Push,
     Report,
     Signal,
     Task,
@@ -11,7 +13,8 @@ import {
     WaitTask
 } from "./army";
 
-function createExecutorMock(): GameExecutor {
+function createExecutorMock(): GameExecutor & { __ops: string[] } {
+    const operations: string[] = [];
     return {
         getGroupBuilders: async () => [],
         getGroupUnits: async () => [],
@@ -26,7 +29,10 @@ function createExecutorMock(): GameExecutor {
         addGroupEventHandlers: async () => { },
         getGroupLeaderPosition: async () => ({ x: 0, y: 0, z: 0 }),
         commandLoad: async () => { },
-        commandUnload: async () => { }
+        commandUnload: async () => { },
+        stopGroup: async () => { operations.push("stopGroup"); },
+        clearGroupWaypoints: async () => { operations.push("clearGroupWaypoints"); },
+        __ops: operations,
     };
 }
 
@@ -99,5 +105,57 @@ describe("Group task execution", () => {
         expect(startedNames).toContain("report-now");
         expect(completedNames).toContain("report-now");
         expect(completedNames).not.toContain("blocked-task");
+    });
+
+    it("cancels active movement task during immediate preemption", async () => {
+        const executor = createExecutorMock() as GameExecutor & { __ops: string[] };
+        const session = { getId: () => "test-session" } as any;
+        const group = new Group("g1", "Alpha", session, executor);
+
+        const movementTask = Push.fromWaypoints([
+            { id: "wp-1", position: { x: 10, y: 10 } }
+        ], "push-to-a");
+        group.addTaskToQueue(movementTask);
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(group.getCurrentTask()?.name).toBe("push-to-a");
+
+        await group.executeImmediately(Report.fromMessage("override", "report-now"));
+
+        expect(executor.__ops).toEqual(["clearGroupWaypoints"]);
+    });
+
+    it("cancels active movement task when clearing tasks", async () => {
+        const executor = createExecutorMock() as GameExecutor & { __ops: string[] };
+        const session = { getId: () => "test-session" } as any;
+        const group = new Group("g1", "Alpha", session, executor);
+
+        const movementTask = Assault.fromWaypoints([
+            { id: "wp-1", position: { x: 10, y: 10 } }
+        ], "assault-a");
+        group.addTaskToQueue(movementTask);
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(group.getCurrentTask()?.name).toBe("assault-a");
+
+        await group.clearTasks();
+
+        expect(executor.__ops).toEqual(["clearGroupWaypoints"]);
+        expect(group.getCurrentTask()).toBeNull();
+        expect(group.taskQueue.length).toBe(0);
+    });
+
+    it("uses no-op cancel for non-movement tasks", async () => {
+        const executor = createExecutorMock() as GameExecutor & { __ops: string[] };
+        const session = { getId: () => "test-session" } as any;
+        const group = new Group("g1", "Alpha", session, executor);
+        const signal: Signal = { id: "sig-1", name: "Signal 1" };
+
+        const waitingTask = WaitTask.fromSignal(signal, "wait-here");
+        group.addTaskToQueue(waitingTask);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await group.clearTasks();
+
+        expect(executor.__ops.length).toBe(0);
     });
 });

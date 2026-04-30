@@ -307,7 +307,7 @@ export class SessionInitializer {
         const armyGroups = army.getGroups();
         for (const group of armyGroups) {
             if (plan.clearGroupTasks?.[group.id]) {
-                group.clearTasks();
+                await group.clearTasks();
             }
             if (plan.immediateTasks?.[group.id]) {
                 void group.executeImmediately(plan.immediateTasks[group.id]);
