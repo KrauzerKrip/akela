@@ -7,8 +7,11 @@ import { configureRuntimeDirs, SessionInitializer } from "./session_initializer"
 export const armaConnector = new ArmaConnector();
 configureRuntimeDirs();
 const sessionInitializer = new SessionInitializer(armaConnector);
+const portRaw = Number(process.env.PORT ?? 3000);
+const port = Number.isFinite(portRaw) ? portRaw : 3000;
 startServer(armaConnector, {
-    initializeSession: (payload) => sessionInitializer.initializeSession(payload)
+    initializeSession: (payload) => sessionInitializer.initializeSession(payload),
+    port,
 });
 
 process.on("SIGINT", async () => {

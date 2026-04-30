@@ -12,6 +12,7 @@ import type {
   SessionInitializePayload,
   SessionInitializeResult,
 } from "./session_initializer";
+import { logRouteException, registerHttpAccessHooks } from "./http_access_logger";
 
 const execAsync = promisify(exec);
 
@@ -49,6 +50,9 @@ export function sendArmaRequest(commands: any[]): Promise<any> {
       }
       pendingRequests.delete(id);
       removeFromQueue(id);
+      console.warn(
+        `[sendArmaRequest] TIMEOUT after ${ARMA_REQUEST_TIMEOUT_MS}ms id=${id} queueLen=${requestQueue.length} pending=${pendingRequests.size}`,
+      );
       pending.reject(
         new Error(
           `Arma request timed out after ${ARMA_REQUEST_TIMEOUT_MS}ms (id=${id}).`,
@@ -135,8 +139,12 @@ export function startServer(
     process.env.AREA_SCRIPT_DIR || path.join(process.cwd(), "..", "python");
   const scriptName = () => process.env.AREA_SCRIPT_NAME || "area.py";
 
-  const app = new Elysia()
-    .onBeforeHandle(({ request, set }) => {
+  const app = registerHttpAccessHooks(
+    new Elysia().derive(({ request }) => ({
+      _accessStartedAt: performance.now(),
+      _accessId: crypto.randomUUID().slice(0, 10),
+    })),
+  ).onBeforeHandle(({ request, set }) => {
       const origin = request.headers.get("origin");
       if (!origin) {
         return;
@@ -148,7 +156,9 @@ export function startServer(
       set.headers["access-control-allow-headers"] =
         "Content-Type,Authorization";
     })
-    .options("*", ({ set }) => {
+    .options("*", ({ set, request }) => {
+      const url = new URL(request.url);
+      console.log(`[route OPTIONS] ${url.pathname}${url.search}`);
       set.status = 204;
       return null;
     })
@@ -156,14 +166,25 @@ export function startServer(
     .ws("/api/events/live", {
       open(ws) {
         wsClients.add(ws);
+        console.log(
+          "[WS /api/events/live] client connected, subscribers=",
+          wsClients.size,
+        );
       },
       close(ws) {
         wsClients.delete(ws);
+        console.log(
+          "[WS /api/events/live] client disconnected, subscribers=",
+          wsClients.size,
+        );
       },
     })
     .get("/poll", () => {
       const req = requestQueue.shift();
       if (req) {
+        console.log(
+          `[route GET /poll] dispatch request id=${req.id} commands=${req.commands?.length ?? 0}`,
+        );
         return { id: req.id, commands: req.commands };
       }
       return "";
@@ -176,6 +197,11 @@ export function startServer(
           pendingRequests.delete(body.id);
           clearTimeout(req.timeout);
           req.resolve(body.response);
+          console.log(`[route POST /respond] matched pending id=${body.id}`);
+        } else {
+          console.warn(
+            `[route POST /respond] no pending request for id=${body.id} (late/stale respond, duplicate, or server restarted). pendingMap=${pendingRequests.size} queueLen=${requestQueue.length}`,
+          );
         }
         return { status: "received" };
       },
@@ -203,8 +229,12 @@ export function startServer(
       async ({ body }) => {
         try {
           const result = await sendArmaRequest(body.commands);
+          console.log(
+            `[route POST /add-request] success commands=${body.commands?.length ?? 0}`,
+          );
           return { success: true, result };
         } catch (e) {
+          console.error("[route POST /add-request] failed", e);
           return { success: false, error: String(e) };
         }
       },
@@ -217,6 +247,7 @@ export function startServer(
     .get("/api/sessions", () => {
       const sessionsDir = runtimeState.getSessionsDir();
       if (!fs.existsSync(sessionsDir)) {
+        console.log("[route GET /api/sessions] sessions dir missing, []");
         return [];
       }
       const directories = fs
@@ -225,7 +256,7 @@ export function startServer(
         .map((entry) => entry.name)
         .sort((a, b) => b.localeCompare(a));
 
-      return directories.map((id) => {
+      const list = directories.map((id) => {
         const sessionPath = path.join(sessionsDir, id);
         const manifest = parseManifest(sessionPath) || {};
         return {
@@ -237,12 +268,18 @@ export function startServer(
           startTime: manifest.startTime ?? id.split("-").slice(0, 3).join("-"),
         };
       });
+      console.log(`[route GET /api/sessions] count=${list.length}`);
+      return list;
     })
     .get("/api/sessions/active", () => {
       const activeSession = runtimeState.getActiveSession();
       if (!activeSession) {
+        console.log("[route GET /api/sessions/active] none");
         return null;
       }
+      console.log(
+        `[route GET /api/sessions/active] id=${activeSession.getId()}`,
+      );
       const manifest = parseManifest(activeSession.getDirectory()) || {};
       return {
         id: activeSession.getId(),
@@ -259,6 +296,9 @@ export function startServer(
       "/api/sessions/initialize",
       async ({ body, set }) => {
         if (!options.initializeSession) {
+          console.error(
+            "[route POST /api/sessions/initialize] handler not configured (501)",
+          );
           set.status = 501;
           return {
             error: "Session initialization is not available in this process.",
@@ -267,6 +307,9 @@ export function startServer(
 
         try {
           const session = await options.initializeSession(body);
+          console.log(
+            `[route POST /api/sessions/initialize] ok sessionId=${session.id}`,
+          );
           return {
             status: "initialized",
             session,
@@ -276,6 +319,9 @@ export function startServer(
             error instanceof Error &&
             error.message === "ACTIVE_SESSION_EXISTS"
           ) {
+            console.warn(
+              "[route POST /api/sessions/initialize] conflict ACTIVE_SESSION_EXISTS",
+            );
             set.status = 409;
             return {
               error: "An active session already exists in this process.",
@@ -285,11 +331,19 @@ export function startServer(
             error instanceof Error &&
             error.message === "SESSION_INITIALIZATION_IN_PROGRESS"
           ) {
+            console.warn(
+              "[route POST /api/sessions/initialize] conflict SESSION_INITIALIZATION_IN_PROGRESS",
+            );
             set.status = 409;
             return {
               error: "A session initialization is already in progress.",
             };
           }
+          logRouteException(
+            "POST /api/sessions/initialize",
+            { missionName: body.missionName, worldName: body.worldName },
+            error,
+          );
           set.status = 500;
           return { error: "Failed to initialize session." };
         }
@@ -316,12 +370,22 @@ export function startServer(
     .get("/api/sessions/:id/events", ({ params, set }) => {
       const sessionPath = getSessionDirectory(params.id);
       if (!fs.existsSync(sessionPath)) {
+        console.warn(`[route GET /api/sessions/:id/events] 404 id=${params.id}`);
         set.status = 404;
         return { error: `Session '${params.id}' not found.` };
       }
       try {
-        return parseEvents(sessionPath);
+        const events = parseEvents(sessionPath);
+        console.log(
+          `[route GET /api/sessions/:id/events] id=${params.id} count=${events.length}`,
+        );
+        return events;
       } catch (error) {
+        logRouteException(
+          "GET /api/sessions/:id/events",
+          { sessionId: params.id },
+          error,
+        );
         set.status = 500;
         return { error: "Failed to read session events." };
       }
@@ -329,19 +393,29 @@ export function startServer(
     .get("/api/sessions/:id/manifest", ({ params, set }) => {
       const sessionPath = getSessionDirectory(params.id);
       if (!fs.existsSync(sessionPath)) {
+        console.warn(
+          `[route GET /api/sessions/:id/manifest] 404 id=${params.id}`,
+        );
         set.status = 404;
         return { error: `Session '${params.id}' not found.` };
       }
       const manifest = parseManifest(sessionPath);
       if (!manifest) {
+        console.warn(
+          `[route GET /api/sessions/:id/manifest] no manifest id=${params.id}`,
+        );
         set.status = 404;
         return { error: "Session manifest not found." };
       }
+      console.log(`[route GET /api/sessions/:id/manifest] ok id=${params.id}`);
       return manifest;
     })
     .get("/api/sessions/:id/dashboard", ({ params, set }) => {
       const sessionPath = getSessionDirectory(params.id);
       if (!fs.existsSync(sessionPath)) {
+        console.warn(
+          `[route GET /api/sessions/:id/dashboard] 404 id=${params.id}`,
+        );
         set.status = 404;
         return { error: `Session '${params.id}' not found.` };
       }
@@ -354,7 +428,7 @@ export function startServer(
           eventCounts[eventType] = (eventCounts[eventType] ?? 0) + 1;
         });
 
-        return {
+        const payload = {
           sessionId: params.id,
           worldName:
             manifest.worldName ?? manifest.intelInput?.area?.world ?? null,
@@ -365,7 +439,16 @@ export function startServer(
           eventCounts,
           totalEvents: events.length,
         };
+        console.log(
+          `[route GET /api/sessions/:id/dashboard] id=${params.id} totalEvents=${events.length}`,
+        );
+        return payload;
       } catch (error) {
+        logRouteException(
+          "GET /api/sessions/:id/dashboard",
+          { sessionId: params.id },
+          error,
+        );
         set.status = 500;
         return { error: "Failed to build dashboard payload." };
       }
@@ -373,6 +456,7 @@ export function startServer(
     .get("/api/sessions/:id/traces", ({ params, set }) => {
       const sessionPath = getSessionDirectory(params.id);
       if (!fs.existsSync(sessionPath)) {
+        console.warn(`[route GET /api/sessions/:id/traces] 404 id=${params.id}`);
         set.status = 404;
         return { error: `Session '${params.id}' not found.` };
       }
@@ -398,19 +482,27 @@ export function startServer(
                   : JSON.stringify(event),
           }));
 
+        console.log(
+          `[route GET /api/sessions/:id/traces] id=${params.id} traces=${traces.length}`,
+        );
         return {
           sessionId: params.id,
           source: "session-events-fallback",
           traces,
         };
       } catch (error) {
+        logRouteException(
+          "GET /api/sessions/:id/traces",
+          { sessionId: params.id },
+          error,
+        );
         set.status = 500;
         return { error: "Failed to load session traces." };
       }
     })
     .get("/api/map/crop", async ({ query, set }) => {
       console.log(
-        `Cropping map for ${query.world}: ${query.x1} ${query.y1} ${query.x2} ${query.y2}`,
+        `[route GET /api/map/crop] world=${query.world} bbox=${query.x1},${query.y1} ${query.x2},${query.y2}`,
       );
       try {
         const world = String(query.world ?? "");
@@ -423,6 +515,7 @@ export function startServer(
           !world ||
           [rawX1, rawY1, rawX2, rawY2].some((v) => !Number.isFinite(v))
         ) {
+          console.warn("[route GET /api/map/crop] invalid query params", query);
           set.status = 400;
           return { error: "Invalid map crop query params." };
         }
@@ -434,11 +527,19 @@ export function startServer(
         const height = y2 - y1;
 
         if (width <= 0 || height <= 0) {
+          console.warn("[route GET /api/map/crop] non-positive area", {
+            width,
+            height,
+          });
           set.status = 400;
           return { error: "Map crop bounds must have positive area." };
         }
 
         if (width > MAX_MAP_CROP_SPAN_METERS || height > MAX_MAP_CROP_SPAN_METERS) {
+          console.warn("[route GET /api/map/crop] span too large", {
+            width,
+            height,
+          });
           set.status = 413;
           return {
             error: `Map crop exceeds max span of ${MAX_MAP_CROP_SPAN_METERS} meters.`,
@@ -455,6 +556,9 @@ export function startServer(
         if (!fs.existsSync(cachedImagePath)) {
           const pythonExec = pythonExecutable();
           if (!pythonExec) {
+            console.error(
+              "[route GET /api/map/crop] PYTHON_EXEC / python not available",
+            );
             set.status = 500;
             return {
               error:
@@ -468,15 +572,30 @@ export function startServer(
           const cmd = `cd "${scriptDir()}" && ${execPrefix} "${scriptName()}" extract ${x1} ${y1} ${x2} ${y2} --out "${cachedImagePath}" --frame --grid`;
           await execAsync(cmd);
           if (!fs.existsSync(cachedImagePath)) {
+            console.error(
+              "[route GET /api/map/crop] python finished but output missing",
+              cachedImagePath,
+            );
             set.status = 500;
             return { error: "Failed to generate map crop." };
           }
         }
 
         set.headers["content-type"] = "image/png";
+        console.log(`[route GET /api/map/crop] ok hash=${hash}`);
         return Bun.file(cachedImagePath);
       } catch (error) {
-        console.error("Map crop generation failed:", error);
+        logRouteException(
+          "GET /api/map/crop",
+          {
+            world: query.world,
+            x1: query.x1,
+            y1: query.y1,
+            x2: query.x2,
+            y2: query.y2,
+          },
+          error,
+        );
         set.status = 500;
         return { error: "Map crop generation failed." };
       }
@@ -486,11 +605,17 @@ export function startServer(
       ({ params, body, set }) => {
         const sessionPath = getSessionDirectory(params.id);
         if (!fs.existsSync(sessionPath)) {
+          console.warn(
+            `[route POST /api/sessions/:id/intervene] 404 session id=${params.id}`,
+          );
           set.status = 404;
           return { error: `Session '${params.id}' not found.` };
         }
         const activeSession = runtimeState.getActiveSession();
         if (!activeSession || activeSession.getId() !== params.id) {
+          console.warn(
+            `[route POST /api/sessions/:id/intervene] not active id=${params.id} active=${activeSession?.getId() ?? "none"}`,
+          );
           set.status = 404;
           return { error: "Session is not active in this process." };
         }
@@ -510,6 +635,9 @@ export function startServer(
           sessionId: params.id,
         });
 
+        console.log(
+          `[route POST /api/sessions/:id/intervene] ok session=${params.id} target=${body.targetAgent}`,
+        );
         return { status: "received" };
       },
       {
@@ -522,7 +650,19 @@ export function startServer(
     .post(
       "/new-event",
       async ({ body }) => {
-        armaConnector.processRawEvent(body.event, body.params);
+        console.log(
+          `[route POST /new-event] event=${body.event} paramsType=${typeof body.params}`,
+        );
+        try {
+          armaConnector.processRawEvent(body.event, body.params);
+        } catch (error) {
+          logRouteException(
+            "POST /new-event",
+            { event: body.event },
+            error,
+          );
+          throw error;
+        }
         // eventHub.publish(withEnvelope<GameDomainEvent>({
         //     source: "GAME",
         //     type: body.event,
