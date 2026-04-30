@@ -645,6 +645,9 @@ export class Group {
     private activeTask: Task | null;
     private executor: GameExecutor;
     private position: Point3D | null;
+    private queueRunnerActive: boolean;
+    private immediateExecutionChain: Promise<void>;
+    private executionGeneration: number;
 
     constructor(id: string, name: string, session: AkelaSession, executor: GameExecutor) {
         this.id = id;
@@ -662,6 +665,9 @@ export class Group {
         this.listeners = [];
         this.signalListeners = [];
         this.position = null;
+        this.queueRunnerActive = false;
+        this.immediateExecutionChain = Promise.resolve();
+        this.executionGeneration = 0;
     }
 
     public getCurrentTask(): Task | null {
@@ -754,8 +760,8 @@ export class Group {
     public addTaskToQueue(task: Task) {
         this.emitDomainEvent({ type: "ORDER_QUEUED", groupId: this.id, task: task } as OrderQueuedEvent);
         this.taskQueue.push(task);
-        if (!this.activeTask) {
-            this.executeNext();
+        if (!this.activeTask && !this.queueRunnerActive) {
+            void this.executeNext();
         }
     }
 
@@ -767,20 +773,47 @@ export class Group {
     }
 
     public async executeImmediately(task: Task) {
-        this.activeTask = task;
-        this.emitDomainEvent({ type: "TASK_STARTED", groupId: this.id, task: task } as TaskStartedEvent);
-        await task.execute(this, this.executor);
+        const runImmediateTask = async () => {
+            const generationAtStart = this.bumpExecutionGeneration();
+            this.activeTask = task;
+            this.emitDomainEvent({ type: "TASK_STARTED", groupId: this.id, task: task } as TaskStartedEvent);
+            let executionError: unknown = null;
+            try {
+                await task.execute(this, this.executor);
+            } catch (error) {
+                executionError = error;
+                console.error(`[Group ${this.getName()}] Immediate task failed (${task.type}:${task.name}):`, error);
+            }
 
-        this.emitDomainEvent({ type: "TASK_COMPLETED", groupId: this.id, task: task } as TaskCompletedEvent);
-        const signal = task.getCompletionSignal();
-        if (signal) {
-            this.emitSignal(signal);
-        }
+            // clearTasks() or another immediate task may have invalidated this completion path.
+            const isCurrentExecution = this.executionGeneration === generationAtStart && this.activeTask === task;
+            if (isCurrentExecution && !executionError) {
+                this.emitDomainEvent({ type: "TASK_COMPLETED", groupId: this.id, task: task } as TaskCompletedEvent);
+                const signal = task.getCompletionSignal();
+                if (signal) {
+                    this.emitSignal(signal);
+                }
+            }
 
-        this.activeTask = null;
+            if (this.activeTask === task) {
+                this.activeTask = null;
+            }
+
+            if (!this.queueRunnerActive && !this.activeTask && this.taskQueue.length > 0) {
+                void this.executeNext();
+            }
+            if (executionError) {
+                throw executionError;
+            }
+        };
+
+        this.immediateExecutionChain = this.immediateExecutionChain.then(runImmediateTask, runImmediateTask);
+
+        await this.immediateExecutionChain;
     }
 
     public clearTasks() {
+        this.bumpExecutionGeneration();
         this.taskQueue = [];
         this.activeTask = null;
         //TODO: Logic to stop current group movement in Arma (e.g. doStop)
@@ -824,24 +857,62 @@ export class Group {
     }
 
     public async executeNext() {
-        if (this.taskQueue.length === 0) {
-            this.activeTask = null;
+        if (this.queueRunnerActive) {
             return;
         }
 
-        this.activeTask = this.taskQueue.shift() || null;
-        if (this.activeTask) {
-            this.emitDomainEvent({ type: "TASK_STARTED", groupId: this.id, task: this.activeTask } as TaskStartedEvent);
-            // This will now naturally wait for the task to finish itself
-            await this.activeTask.execute(this, this.executor);
-            this.emitDomainEvent({ type: "TASK_COMPLETED", groupId: this.id, task: this.activeTask } as TaskCompletedEvent);
+        this.queueRunnerActive = true;
+        try {
+            while (this.taskQueue.length > 0) {
+                if (this.activeTask) {
+                    break;
+                }
 
-            const signal = this.activeTask.getCompletionSignal()
-            if (signal) {
-                this.emitSignal(signal);
+                const nextTask = this.taskQueue.shift() || null;
+                if (!nextTask) {
+                    break;
+                }
+
+                this.activeTask = nextTask;
+                const generationAtStart = this.executionGeneration;
+                this.emitDomainEvent({ type: "TASK_STARTED", groupId: this.id, task: nextTask } as TaskStartedEvent);
+                let taskFailed = false;
+                try {
+                    await nextTask.execute(this, this.executor);
+                } catch (error) {
+                    taskFailed = true;
+                    console.error(`[Group ${this.getName()}] Queued task failed (${nextTask.type}:${nextTask.name}):`, error);
+                }
+
+                const completedTask = nextTask;
+                const isCurrentExecution = this.executionGeneration === generationAtStart && this.activeTask === completedTask;
+                if (isCurrentExecution && !taskFailed) {
+                    this.emitDomainEvent({ type: "TASK_COMPLETED", groupId: this.id, task: completedTask } as TaskCompletedEvent);
+                    const signal = completedTask.getCompletionSignal();
+                    if (signal) {
+                        this.emitSignal(signal);
+                    }
+                }
+
+                if (this.activeTask === completedTask) {
+                    this.activeTask = null;
+                }
+
+                if (this.executionGeneration !== generationAtStart) {
+                    break;
+                }
             }
-            this.executeNext();
+        } finally {
+            this.queueRunnerActive = false;
+            if (!this.activeTask && this.taskQueue.length > 0) {
+                void this.executeNext();
+            }
         }
+    }
+
+    private bumpExecutionGeneration(): number {
+        this.executionGeneration += 1;
+        return this.executionGeneration;
     }
 
     public async updateSituationalData() {
