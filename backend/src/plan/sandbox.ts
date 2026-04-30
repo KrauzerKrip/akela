@@ -7,6 +7,7 @@ import { Army, Group, Push, Assault, Retreat, Report, Task, Waypoint, GameExecut
 import { PlanEvent, PlanGroup, Plan } from "./models";
 import { Point } from "../geography";
 import { translateTask, translateToPlanGroup } from "./translation";
+import { validateTransportPlan } from "./transport_validation";
 
 export type PlanSandboxResetMode = "full" | "preserveReactions";
 
@@ -111,6 +112,7 @@ export class PlanSandbox {
         }
         this.mergeTaskReactions(plan.taskReactions, "makePlan");
         this.mergeGroupReactions(plan.groupReactions, "makePlan");
+        validateTransportPlan(army, plan);
 
         return plan;
     }

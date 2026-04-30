@@ -34,6 +34,46 @@ All tasks inherit from a base class and support `.on(Event, callback)` and `.sig
 ## Synchronization
 * **`new SyncPoint(name)`**: Creates a unique signal used to coordinate different groups. Pass this into a `Wait` task or a `.signals()` modifier.
 
+## Transport Contract (Mandatory)
+When transporting infantry with a vehicle, follow this exact contract:
+1. Infantry group queues `Embark(vehicle).signals(embarkDone)`.
+2. Vehicle group queues `Wait(embarkDone)` before any movement.
+3. Vehicle group executes movement (`Push`/`Assault`) while infantry is mounted.
+4. Vehicle group signals dropoff readiness after movement (for example `Push(...).signals(dropoffReady)`).
+5. Infantry group waits on `Wait(dropoffReady)`, then queues `Disembark(...).signals(dismounted)`.
+6. If embark can fail, include a `TIMEOUT` reaction (task-level or group-level fallback) for the infantry group.
+
+**CRITICAL RULES**:
+* While infantry is mounted, movement tasks must be issued to the vehicle group, not the infantry group.
+* Infantry movement (`Push`/`Assault`/`Retreat`) after `Embark` is allowed only after a synced `Disembark`.
+* Do not move the vehicle before the embark sync has completed.
+* `Disembark` must be assigned to the transported infantry group, not the vehicle-owner group.
+
+**Good example**:
+```js
+const embarkDone = new SyncPoint("echo_embark_done");
+const dropoffReady = new SyncPoint("echo_dropoff_ready");
+const dismounted = new SyncPoint("echo_dismounted");
+const ifv = groups["Echo 1-1 IFV"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+
+groups["Echo 1-2 Assault"]
+  .enqueue(new Embark(ifv, "Echo Assault embark").signals(embarkDone))
+  .enqueue(new Wait(dropoffReady, "Wait for IFV dropoff"))
+  .enqueue(new Disembark("Echo assault dismount").signals(dismounted));
+
+groups["Echo 1-1 IFV"]
+  .enqueue(new Wait(embarkDone, "Wait until embarked"))
+  .enqueue(new Push([{ x: 21000, y: 19300 }], "Transport to assault line").signals(dropoffReady));
+```
+
+**Bad example (invalid order)**:
+```js
+const ifv = groups["Echo 1-1 IFV"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+groups["Echo 1-2 Assault"].enqueue(new Embark(ifv, "Embark")); // no signal
+groups["Echo 1-1 IFV"].enqueue(new Push([{ x: 21000, y: 19300 }], "Move now")); // moves before embark sync
+groups["Echo 1-2 Assault"].enqueue(new Push([{ x: 21200, y: 19400 }], "Advance mounted")); // infantry movement while mounted
+```
+
 ## Group Control (The `groups` Object)
 Every group (e.g., `groups["Alpha"]`) has access to the following methods:
 * `.on(Event, (event, group) => { ... })`: Attaches a persistent, group-wide reaction that remains active for the whole plan period, including when the group has no current task. Supports chaining.

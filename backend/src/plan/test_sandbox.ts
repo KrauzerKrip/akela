@@ -62,6 +62,7 @@ async function setupArmy() {
         alpha.addUnit(unitA);
         bravo.addUnit(unitB);
     }
+    bravo.addVehicle({ id: "ifv-1", name: "B_APC_Wheeled_01_cannon_F" });
 
     army.addGroup(alpha);
     army.addGroup(bravo);
@@ -202,12 +203,149 @@ groups["Alpha"]
     sandbox.dispose();
 }
 
+async function testTransportValidationAcceptsValidSyncAndTimeout() {
+    const { army } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+const embarkDone = new SyncPoint("embark_done");
+const dropoffReady = new SyncPoint("dropoff_ready");
+const dismounted = new SyncPoint("dismounted");
+const ifv = groups["Bravo"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+
+groups["Alpha"]
+  .on(Event.TIMEOUT, (event, group) => {
+    group.executeImmediately(new Report("Embark timeout fallback", "alpha_embark_timeout"));
+  })
+  .enqueue(new Embark(ifv, "Alpha embark IFV").signals(embarkDone))
+  .enqueue(new Wait(dropoffReady, "Alpha wait dropoff"))
+  .enqueue(new Disembark("Alpha dismount").signals(dismounted));
+
+groups["Bravo"]
+  .enqueue(new Wait(embarkDone, "Bravo wait embark sync"))
+  .enqueue(new Push([{ x: 1000, y: 1000 }], "Bravo transport push").signals(dropoffReady));
+`;
+    await sandbox.makePlan(army, code);
+    sandbox.dispose();
+}
+
+async function testTransportValidationRejectsVehicleMovingBeforeEmbarkSync() {
+    const { army } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+const embarkDone = new SyncPoint("embark_done");
+const dropoffReady = new SyncPoint("dropoff_ready");
+const ifv = groups["Bravo"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+
+groups["Alpha"]
+  .on(Event.TIMEOUT, (event, group) => {
+    group.executeImmediately(new Report("Embark timeout fallback", "alpha_embark_timeout"));
+  })
+  .enqueue(new Embark(ifv, "Alpha embark IFV").signals(embarkDone))
+  .enqueue(new Wait(dropoffReady, "Alpha wait dropoff"))
+  .enqueue(new Disembark("Alpha dismount"));
+
+groups["Bravo"]
+  .enqueue(new Push([{ x: 1000, y: 1000 }], "Bravo transport push"))
+  .enqueue(new Wait(embarkDone, "Bravo wait embark sync"))
+  .enqueue(new Push([{ x: 1100, y: 1000 }], "Bravo transport finish").signals(dropoffReady));
+`;
+    await assert.rejects(
+        () => sandbox.makePlan(army, code),
+        (error: any) => String(error?.message || "").includes("VEHICLE_MOVES_BEFORE_EMBARK_SYNC"),
+    );
+    sandbox.dispose();
+}
+
+async function testTransportValidationRejectsInfantryMovementWhileMounted() {
+    const { army } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+const embarkDone = new SyncPoint("embark_done");
+const dropoffReady = new SyncPoint("dropoff_ready");
+const ifv = groups["Bravo"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+
+groups["Alpha"]
+  .on(Event.TIMEOUT, (event, group) => {
+    group.executeImmediately(new Report("Embark timeout fallback", "alpha_embark_timeout"));
+  })
+  .enqueue(new Embark(ifv, "Alpha embark IFV").signals(embarkDone))
+  .enqueue(new Push([{ x: 1200, y: 1300 }], "Alpha invalid movement while mounted"))
+  .enqueue(new Wait(dropoffReady, "Alpha wait dropoff"))
+  .enqueue(new Disembark("Alpha dismount"));
+
+groups["Bravo"]
+  .enqueue(new Wait(embarkDone, "Bravo wait embark sync"))
+  .enqueue(new Push([{ x: 1000, y: 1000 }], "Bravo transport push").signals(dropoffReady));
+`;
+    await assert.rejects(
+        () => sandbox.makePlan(army, code),
+        (error: any) => String(error?.message || "").includes("INFANTRY_MOVES_WHILE_MOUNTED"),
+    );
+    sandbox.dispose();
+}
+
+async function testTransportValidationRejectsMissingTimeoutHandler() {
+    const { army } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+const embarkDone = new SyncPoint("embark_done");
+const dropoffReady = new SyncPoint("dropoff_ready");
+const ifv = groups["Bravo"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+
+groups["Alpha"]
+  .enqueue(new Embark(ifv, "Alpha embark IFV").signals(embarkDone))
+  .enqueue(new Wait(dropoffReady, "Alpha wait dropoff"))
+  .enqueue(new Disembark("Alpha dismount"));
+
+groups["Bravo"]
+  .enqueue(new Wait(embarkDone, "Bravo wait embark sync"))
+  .enqueue(new Push([{ x: 1000, y: 1000 }], "Bravo transport push").signals(dropoffReady));
+`;
+    await assert.rejects(
+        () => sandbox.makePlan(army, code),
+        (error: any) => String(error?.message || "").includes("EMBARK_TIMEOUT_HANDLER_MISSING"),
+    );
+    sandbox.dispose();
+}
+
+async function testTransportValidationRejectsVehicleOwnedDisembark() {
+    const { army } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+const embarkDone = new SyncPoint("embark_done");
+const disembarkDone = new SyncPoint("disembark_done");
+const ifv = groups["Bravo"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+
+groups["Alpha"]
+  .on(Event.TIMEOUT, (event, group) => {
+    group.executeImmediately(new Report("Embark timeout fallback", "alpha_embark_timeout"));
+  })
+  .enqueue(new Embark(ifv, "Alpha embark IFV").signals(embarkDone))
+  .enqueue(new Wait(disembarkDone, "Alpha wait disembark"));
+
+groups["Bravo"]
+  .enqueue(new Wait(embarkDone, "Bravo wait embark sync"))
+  .enqueue(new Push([{ x: 1000, y: 1000 }], "Bravo transport push"))
+  .enqueue(new Disembark("Bravo invalid unload").signals(disembarkDone));
+`;
+    await assert.rejects(
+        () => sandbox.makePlan(army, code),
+        (error: any) => String(error?.message || "").includes("VEHICLE_GROUP_DISEMBARK_FORBIDDEN"),
+    );
+    sandbox.dispose();
+}
+
 async function test() {
     await testIdleGroupReaction();
     await testTaskOverridesGroupReaction();
     await testGroupFallbackWhenTaskHasNoEventReaction();
     await testAdditionalPlanReplacesOverlappingGroupReactionOnly();
     await testAdditionalPlanKeepsTaskReactions();
+    await testTransportValidationAcceptsValidSyncAndTimeout();
+    await testTransportValidationRejectsVehicleMovingBeforeEmbarkSync();
+    await testTransportValidationRejectsInfantryMovementWhileMounted();
+    await testTransportValidationRejectsMissingTimeoutHandler();
+    await testTransportValidationRejectsVehicleOwnedDisembark();
     console.log("All sandbox reaction tests passed.");
 }
 
