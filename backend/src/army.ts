@@ -834,17 +834,18 @@ export class Group {
             this.waypointList.deleteById(event.waypointId);
             this.emitDomainEvent(event);
         });
-
         gameEventDispatcher.addGroupHandler<UnitKilledEvent>(this, "UNIT_KILLED", (event: UnitKilledEvent) => {
             this.unitsAlive[event.unitId] = false;
             this.emitDomainEvent(event);
         });
-
         gameEventDispatcher.addGroupHandler<EnemyDetectedEvent>(this, "ENEMY_DETECTED", (event: EnemyDetectedEvent) => {
             this.emitDomainEvent(event);
         });
 
         gameEventDispatcher.addGroupHandler<CombatModeChangedEvent>(this, "COMBAT_MODE_CHANGED", (event: CombatModeChangedEvent) => {
+            this.emitDomainEvent(event);
+        });
+        gameEventDispatcher.addGroupHandler<EmbarkingCompleteEvent>(this, "EMBARKING_COMPLETE", (event: EmbarkingCompleteEvent) => {
             this.emitDomainEvent(event);
         });
     }

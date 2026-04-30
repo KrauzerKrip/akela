@@ -60,7 +60,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
 
     public processRawEvent(eventName: string, params: any): void {
         const parsedEvent = this.parseArmaGroupEvent(eventName, params);
-        console.log(parsedEvent);
+        console.log(`Processed event: ${eventName}, parsedEvent: ${JSON.stringify(parsedEvent)}`);
         if (parsedEvent) {
             this.fireGroupEvent(parsedEvent);
         }

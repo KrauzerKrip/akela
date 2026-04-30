@@ -121,7 +121,8 @@ export class GroupCombatMonitor {
                 const newEvent: TacticalReportEvent = {
                     groupId: event.groupId,
                     type: "TACTICAL_REPORT",
-                    message: (event as TacticalReportEvent).message
+                    message: (event as TacticalReportEvent).message,
+                    source: "SYSTEM"
                 }
                 this.emitTacticalEvent(newEvent);
                 break;
