@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { ArmaConnector } from "./arma_connection";
 import {
     Assault,
     Embark,
@@ -80,6 +81,22 @@ describe("Group task execution", () => {
         await expect(execution).resolves.toBeUndefined();
     });
 
+    it("resolves Embark from Arma LoadComplete event", async () => {
+        const group = createGroup();
+        const connector = new ArmaConnector();
+        group.setupEventHandlers(connector);
+
+        const vehicle: Vehicle = { id: "veh-1", name: "APC" };
+        connector.registerGroup(group.id, "0:group");
+        connector.registerVehicle(vehicle.id, "0:vehicle");
+
+        const task = Embark.fromVehicle(vehicle, "embark-apc");
+        const execution = task.execute(group, createExecutorMock());
+        connector.processRawEvent("LoadComplete", ["0:group", "0:vehicle", "Complete"]);
+
+        await expect(execution).resolves.toBeUndefined();
+    });
+
     it("preempts a hanging active task with executeImmediately", async () => {
         const group = createGroup();
         const events: GroupEvent[] = [];
@@ -105,6 +122,31 @@ describe("Group task execution", () => {
         expect(startedNames).toContain("report-now");
         expect(completedNames).toContain("report-now");
         expect(completedNames).not.toContain("blocked-task");
+    });
+
+    it("does not block new immediate task behind stalled immediate chain", async () => {
+        const group = createGroup();
+        const events: GroupEvent[] = [];
+        group.subscribe((event) => {
+            events.push(event);
+        });
+
+        void group.executeImmediately(new HangingTask("hung-immediate"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        await group.executeImmediately(Report.fromMessage("Immediate override", "override-now"));
+
+        const startedNames = events
+            .filter((event) => event.type === "TASK_STARTED")
+            .map((event) => (event as any).task.name);
+        const completedNames = events
+            .filter((event) => event.type === "TASK_COMPLETED")
+            .map((event) => (event as any).task.name);
+
+        expect(startedNames).toContain("hung-immediate");
+        expect(startedNames).toContain("override-now");
+        expect(completedNames).toContain("override-now");
+        expect(completedNames).not.toContain("hung-immediate");
     });
 
     it("cancels active movement task during immediate preemption", async () => {

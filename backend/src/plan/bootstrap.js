@@ -43,7 +43,7 @@ global.Push = class extends Task {
 
 global.Assault = class extends Task {
     constructor(waypoints, name) {
-        super('ASSAULT');
+        super('ASSAULT', name);
         this.waypoints = waypoints;
         this.behaviourChangeTo = null;
     }

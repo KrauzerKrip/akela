@@ -835,9 +835,11 @@ export class Group {
             }
         };
 
-        this.immediateExecutionChain = this.immediateExecutionChain.then(runImmediateTask, runImmediateTask);
-
-        await this.immediateExecutionChain;
+        // Do not chain behind previous immediate tasks: if an old movement task stalls forever,
+        // new commander overrides must still start immediately.
+        const executionPromise = runImmediateTask();
+        this.immediateExecutionChain = executionPromise.catch(() => undefined);
+        await executionPromise;
     }
 
     public async clearTasks() {

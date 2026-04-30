@@ -382,29 +382,124 @@ export class SessionInitializer {
                             planSummary: serializePlanSummary(plan),
                             sessionId: session.getId()
                         } as any) as any);
-                        await this.actAccordingToPlan(plan, army);
+                        await this.actAccordingToPlan(plan, army, session);
                     }
                 }
             }
         );
     }
 
-    private async actAccordingToPlan(plan: Plan, army: Army): Promise<void> {
+    private async actAccordingToPlan(plan: Plan, army: Army, session: Session): Promise<void> {
         const armyGroups = army.getGroups();
+        const verificationTargets: Array<{ group: Group; task: Task }> = [];
         for (const group of armyGroups) {
+            const clearQueue = Boolean(plan.clearGroupTasks?.[group.id]);
+            const immediateTask = plan.immediateTasks?.[group.id];
+            const queuedTasks = plan.queuedTasks?.[group.id] ?? [];
+            const currentTask = group.getCurrentTask();
+            console.log(
+                `[PlanApply] group=${group.getName()} id=${group.id} clearQueue=${clearQueue} immediate=${immediateTask ? `${immediateTask.type}:${immediateTask.name}(${immediateTask.id})` : "none"} queued=${queuedTasks.length} current=${currentTask ? `${currentTask.type}:${currentTask.name}(${currentTask.id})` : "none"}`,
+            );
             if (plan.clearGroupTasks?.[group.id]) {
+                console.log(`[PlanApply] clearing tasks for group=${group.getName()} id=${group.id}`);
                 await group.clearTasks();
+                console.log(`[PlanApply] cleared tasks for group=${group.getName()} id=${group.id}`);
             }
             if (plan.immediateTasks?.[group.id]) {
-                void group.executeImmediately(plan.immediateTasks[group.id]);
+                const task = plan.immediateTasks[group.id];
+                verificationTargets.push({ group, task });
+                console.log(
+                    `[PlanApply] scheduling immediate task group=${group.getName()} id=${group.id} task=${task.type}:${task.name}(${task.id})`,
+                );
+                void group.executeImmediately(task).catch((error) => {
+                    console.error(
+                        `[PlanApply] immediate task rejected group=${group.getName()} id=${group.id} task=${task.type}:${task.name}(${task.id})`,
+                        error,
+                    );
+                });
             }
             if (plan.queuedTasks?.[group.id]) {
                 plan.queuedTasks[group.id].forEach((task) => {
+                    console.log(
+                        `[PlanApply] enqueue task group=${group.getName()} id=${group.id} task=${task.type}:${task.name}(${task.id})`,
+                    );
                     group.addTaskToQueue(task);
                 });
             }
         }
         await new Promise((resolve) => setTimeout(resolve, 0));
+        for (const { group, task } of verificationTargets) {
+            const activeTask = group.getCurrentTask();
+            if (activeTask?.id === task.id) {
+                eventHub.publish(withEnvelope({
+                    source: "SYSTEM",
+                    type: "PLAN_APPLY_VERIFICATION",
+                    status: "OK",
+                    groupId: group.id,
+                    groupName: group.getName(),
+                    expectedTask: {
+                        id: task.id,
+                        type: task.type,
+                        name: task.name,
+                    },
+                    activeTask: {
+                        id: activeTask.id,
+                        type: activeTask.type,
+                        name: activeTask.name,
+                    },
+                    sessionId: session.getId(),
+                } as any) as any);
+                console.log(
+                    `[PlanApply] verification ok group=${group.getName()} id=${group.id} activeTask=${activeTask.type}:${activeTask.name}(${activeTask.id})`,
+                );
+                continue;
+            }
+
+            if (!activeTask) {
+                eventHub.publish(withEnvelope({
+                    source: "SYSTEM",
+                    type: "PLAN_APPLY_VERIFICATION",
+                    status: "MISMATCH",
+                    reason: "NO_ACTIVE_TASK",
+                    groupId: group.id,
+                    groupName: group.getName(),
+                    expectedTask: {
+                        id: task.id,
+                        type: task.type,
+                        name: task.name,
+                    },
+                    activeTask: null,
+                    sessionId: session.getId(),
+                } as any) as any);
+                console.warn(
+                    `[PlanApply] verification mismatch group=${group.getName()} id=${group.id} expected=${task.type}:${task.name}(${task.id}) activeTask=none`,
+                );
+                continue;
+            }
+
+            eventHub.publish(withEnvelope({
+                source: "SYSTEM",
+                type: "PLAN_APPLY_VERIFICATION",
+                status: "MISMATCH",
+                reason: "UNEXPECTED_ACTIVE_TASK",
+                groupId: group.id,
+                groupName: group.getName(),
+                expectedTask: {
+                    id: task.id,
+                    type: task.type,
+                    name: task.name,
+                },
+                activeTask: {
+                    id: activeTask.id,
+                    type: activeTask.type,
+                    name: activeTask.name,
+                },
+                sessionId: session.getId(),
+            } as any) as any);
+            console.warn(
+                `[PlanApply] verification mismatch group=${group.getName()} id=${group.id} expected=${task.type}:${task.name}(${task.id}) activeTask=${activeTask.type}:${activeTask.name}(${activeTask.id})`,
+            );
+        }
     }
 
     private isPipelineDisabled(): boolean {

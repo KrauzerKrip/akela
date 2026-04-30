@@ -44,15 +44,16 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
     }
 
     public fireGroupEvent(event: EngineGroupEvent): void {
-        const groupId = event.groupId;
+        const normalizedEvent = { ...event, source: "GAME" } as EngineGroupEvent;
+        const groupId = normalizedEvent.groupId;
         if (!groupId) return;
 
         const groupHandlers = this.groupEventHandlers[groupId];
         if (groupHandlers) {
-            const handlers = groupHandlers[event.type];
+            const handlers = groupHandlers[normalizedEvent.type];
             if (handlers) {
                 for (const handler of handlers) {
-                    handler(event);
+                    handler(normalizedEvent);
                 }
             }
         }
@@ -119,6 +120,7 @@ export class ArmaConnector implements GameExecutor, GameEventDispatcher {
                 const status = params[2];
                 return {
                     type: "EMBARKING_COMPLETE",
+                    groupId,
                     vehicleId: vehicleId,
                     status: status,
                 } as EmbarkingCompleteEvent;
