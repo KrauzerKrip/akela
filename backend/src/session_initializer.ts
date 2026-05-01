@@ -1,30 +1,16 @@
-import fs from "fs";
 import path from "path";
-import { propagateAttributes } from "@langfuse/tracing";
-import { DatabaseSessionService } from "@google/adk";
-import { ExecutionAgent, Image, Intel, IntelAgent, NewPlanEvent, PlanAgent } from "./agent";
 import { ArmaConnector } from "./arma_connection";
 import {
-    Army,
     ArmyComposer,
-    EnemyContactEvent,
     Group,
-    GroupEvent,
-    Task,
-    TacticalGroupEvent,
-    TaskCompletedEvent
+    Task
 } from "./army";
 import { ArmyCombatMonitor } from "./combat";
 import { EventHubCompositionProgressLogger } from "./composition_progress";
 import { eventHub, withEnvelope } from "./event";
-import { SimpleExecutionPromptFormatter, SimpleIntelPromptFormatter, SimplePlanPromptFormatter, YamlSitrepFormatter } from "./format";
-import { GameMap } from "./geography";
-import type { Plan } from "./plan/models";
-import { PlanSandbox } from "./plan/sandbox";
-import { PlanVisualizer } from "./plan/visualization";
+import { PipelineFactory } from "./pipeline";
 import { runtimeState } from "./runtime_state";
 import { Session } from "./session";
-import { createSitrep } from "./sitrep";
 
 export interface SessionInitializePayload {
     intel: {
@@ -69,25 +55,6 @@ interface LiveSessionRuntime {
     unsubscribeEventLog: () => void;
 }
 
-interface SerializedTaskRoute {
-    id: string;
-    name: string;
-    type: string;
-    destination: [number, number] | null;
-    waypoints: Array<[number, number]>;
-}
-
-interface SerializedPlanGroupRoutes {
-    groupId: string;
-    clearQueue: boolean;
-    immediateTask: SerializedTaskRoute | null;
-    queuedTasks: SerializedTaskRoute[];
-}
-
-interface SerializedPlanSummary {
-    groups: SerializedPlanGroupRoutes[];
-}
-
 function toPointTuple(value: unknown): [number, number] | null {
     if (!value || typeof value !== "object") {
         return null;
@@ -99,7 +66,7 @@ function toPointTuple(value: unknown): [number, number] | null {
     return [point.x, point.y];
 }
 
-function serializeTask(task: Task | null | undefined): SerializedTaskRoute | null {
+function serializeTask(task: Task | null | undefined): Record<string, unknown> | null {
     if (!task) {
         return null;
     }
@@ -127,24 +94,6 @@ function serializeTask(task: Task | null | undefined): SerializedTaskRoute | nul
     };
 }
 
-function serializePlanSummary(plan: Plan): SerializedPlanSummary {
-    const groupIds = new Set<string>([
-        ...Object.keys(plan.immediateTasks ?? {}),
-        ...Object.keys(plan.queuedTasks ?? {}),
-        ...Object.keys(plan.clearGroupTasks ?? {})
-    ]);
-    return {
-        groups: [...groupIds].map((groupId) => ({
-            groupId,
-            clearQueue: Boolean(plan.clearGroupTasks?.[groupId]),
-            immediateTask: serializeTask(plan.immediateTasks?.[groupId] ?? null),
-            queuedTasks: (plan.queuedTasks?.[groupId] ?? [])
-                .map((task) => serializeTask(task))
-                .filter((task): task is SerializedTaskRoute => task !== null)
-        }))
-    };
-}
-
 function serializeLiveEvent(event: Record<string, any>): Record<string, any> {
     const nextEvent = { ...event };
     if ("task" in nextEvent) {
@@ -155,11 +104,13 @@ function serializeLiveEvent(event: Record<string, any>): Record<string, any> {
 
 export class SessionInitializer {
     private readonly armaConnector: ArmaConnector;
+    private readonly pipelineFactory: PipelineFactory;
     private liveRuntime: LiveSessionRuntime | null = null;
     private isInitializing = false;
 
-    constructor(armaConnector: ArmaConnector) {
+    constructor(armaConnector: ArmaConnector, pipelineFactory: PipelineFactory) {
         this.armaConnector = armaConnector;
+        this.pipelineFactory = pipelineFactory;
     }
 
     public async initializeSession(payload: SessionInitializePayload): Promise<SessionInitializeResult> {
@@ -202,7 +153,8 @@ export class SessionInitializer {
                     sessionId: session.getId()
                 } as any) as any);
             } else {
-                void this.startPipeline(session, payload, army, groups, monitor).catch((error) => {
+                const pipeline = this.pipelineFactory({ session, payload, army, groups, monitor });
+                void pipeline.run().catch((error) => {
                     const message = error instanceof Error ? error.message : "Unknown pipeline failure.";
                     eventHub.publish(withEnvelope({
                         source: "SYSTEM",
@@ -231,308 +183,9 @@ export class SessionInitializer {
         }
     }
 
-    private async startPipeline(
-        session: Session,
-        payload: SessionInitializePayload,
-        army: Army,
-        groups: Group[],
-        monitor: ArmyCombatMonitor
-    ): Promise<void> {
-        const dbUrl = process.env.SESSION_DB_URL;
-        if (!dbUrl) {
-            throw new Error("SESSION_DB_URL is required to start Intel/Plan/Execution pipeline.");
-        }
-
-        await propagateAttributes(
-            {
-                traceName: "AgenticPipeline",
-                sessionId: session.getId(),
-                tags: ["initial"]
-            },
-            async () => {
-                const sessionService = new DatabaseSessionService(dbUrl);
-                await sessionService.init();
-
-                const gameMap = new GameMap(session);
-                const gameMapArea = await gameMap.extractArea(
-                    { x: payload.area.x1, y: payload.area.y1 },
-                    { x: payload.area.x2, y: payload.area.y2 }
-                );
-
-                const intel: Intel = {
-                    images: (payload.intel.photos ?? [])
-                        .filter((photoPath) => typeof photoPath === "string" && fs.existsSync(photoPath))
-                        .map((photoPath) => new Image(photoPath)),
-                    observations: payload.intel.observations ?? []
-                };
-
-                const intelAgent = new IntelAgent(new SimpleIntelPromptFormatter(), sessionService, session);
-                const intelResult = await intelAgent.analyze(intel, gameMapArea);
-                this.updateManifest(session, { intelResult });
-
-                const sitreps = groups
-                    .map((group) => {
-                        const groupMonitor = monitor.getGroupMonitor(group.id);
-                        return groupMonitor ? createSitrep(group, groupMonitor) : null;
-                    })
-                    .filter((sitrep): sitrep is NonNullable<typeof sitrep> => sitrep !== null);
-
-                const planSandbox = await PlanSandbox.create();
-                const planAgent = new PlanAgent(
-                    new SimplePlanPromptFormatter(new YamlSitrepFormatter()),
-                    sessionService,
-                    session,
-                    planSandbox,
-                    new PlanVisualizer(session)
-                );
-                const planningResult = await planAgent.plan(army, sitreps, intelResult, gameMapArea);
-                this.updateManifest(session, { planningResult });
-
-                const executionAgent = new ExecutionAgent(
-                    new SimpleExecutionPromptFormatter(new YamlSitrepFormatter()),
-                    new YamlSitrepFormatter(),
-                    sessionService,
-                    session,
-                    planSandbox
-                );
-
-                this.updateManifest(session, { executionEvents: [] });
-
-                const applySandboxPlan = async (newPlan: Plan) => {
-                    try {
-                        const safePlan = { ...newPlan };
-                        this.appendManifestExecutionEvent(session, { type: "NEW_PLAN", plan: safePlan });
-                    } catch (e) {
-                        console.log("Failed to save sandbox plan to manifest:", e);
-                    }
-                    await this.actAccordingToPlan(newPlan, army);
-                };
-
-                monitor.subscribe(async (event: TacticalGroupEvent) => {
-                    const group = army.getGroupById(event.groupId);
-                    if (!group) {
-                        return;
-                    }
-                    let planEvent: { type: string; count?: number; kind?: unknown } | null = null;
-                    if (event.type === "ENEMY_CONTACT") {
-                        const ec = event as EnemyContactEvent;
-                        planEvent = {
-                            type: "ENEMY_CONTACT",
-                            count: ec.contactCount,
-                            kind: ec.kind
-                        };
-                    } else if (
-                        event.type === "KIA"
-                        || event.type === "ENGAGED_IN_COMBAT"
-                        || event.type === "COMBAT_ENDED"
-                        || event.type === "TIMEOUT"
-                    ) {
-                        planEvent = { type: event.type };
-                    }
-
-                    if (planEvent) {
-                        const newPlan = planSandbox.handlePlanEvent(group, planEvent as any);
-                        if (newPlan) {
-                            await applySandboxPlan(newPlan);
-                        }
-                    }
-                });
-
-                groups.forEach((group) => {
-                    group.subscribe(async (event: GroupEvent) => {
-                        if (event.type === "TASK_COMPLETED") {
-                            const completedTask = (event as TaskCompletedEvent).task;
-                            if (!completedTask) {
-                                return;
-                            }
-                            const taskName = completedTask.name;
-                            const planEvent = { type: "TASK_COMPLETE" as const, taskName };
-                            const newPlan = planSandbox.handlePlanEvent(group, planEvent);
-                            if (newPlan) {
-                                await applySandboxPlan(newPlan);
-                            }
-                        }
-                    });
-                });
-
-                for await (const executionEvent of executionAgent.execute(army, monitor, planningResult)) {
-                    try {
-                        const safeEvent = { ...executionEvent } as Record<string, unknown>;
-                        if (safeEvent.type === "NEW_PLAN") {
-                            delete safeEvent.plan;
-                        }
-                        this.appendManifestExecutionEvent(session, safeEvent);
-                    } catch (e) {
-                        console.log("Failed to save execution event to manifest:", e);
-                    }
-
-                    if (executionEvent.type === "AGENT_RESPONSE") {
-                        eventHub.publish(withEnvelope({
-                            source: "AI",
-                            type: "AGENT_RESPONSE",
-                            response: (executionEvent as any).response,
-                            sessionId: session.getId()
-                        } as any) as any);
-                    } else if (executionEvent.type === "NEW_PLAN") {
-                        const plan = (executionEvent as NewPlanEvent).plan;
-                        eventHub.publish(withEnvelope({
-                            source: "AI",
-                            type: "NEW_PLAN",
-                            code: (executionEvent as any).code,
-                            planSummary: serializePlanSummary(plan),
-                            sessionId: session.getId()
-                        } as any) as any);
-                        await this.actAccordingToPlan(plan, army, session);
-                    }
-                }
-            }
-        );
-    }
-
-    private async actAccordingToPlan(plan: Plan, army: Army, session: Session): Promise<void> {
-        const armyGroups = army.getGroups();
-        const verificationTargets: Array<{ group: Group; task: Task }> = [];
-        for (const group of armyGroups) {
-            const clearQueue = Boolean(plan.clearGroupTasks?.[group.id]);
-            const immediateTask = plan.immediateTasks?.[group.id];
-            const queuedTasks = plan.queuedTasks?.[group.id] ?? [];
-            const currentTask = group.getCurrentTask();
-            console.log(
-                `[PlanApply] group=${group.getName()} id=${group.id} clearQueue=${clearQueue} immediate=${immediateTask ? `${immediateTask.type}:${immediateTask.name}(${immediateTask.id})` : "none"} queued=${queuedTasks.length} current=${currentTask ? `${currentTask.type}:${currentTask.name}(${currentTask.id})` : "none"}`,
-            );
-            if (plan.clearGroupTasks?.[group.id]) {
-                console.log(`[PlanApply] clearing tasks for group=${group.getName()} id=${group.id}`);
-                await group.clearTasks();
-                console.log(`[PlanApply] cleared tasks for group=${group.getName()} id=${group.id}`);
-            }
-            if (plan.immediateTasks?.[group.id]) {
-                const task = plan.immediateTasks[group.id];
-                verificationTargets.push({ group, task });
-                console.log(
-                    `[PlanApply] scheduling immediate task group=${group.getName()} id=${group.id} task=${task.type}:${task.name}(${task.id})`,
-                );
-                void group.executeImmediately(task).catch((error) => {
-                    console.error(
-                        `[PlanApply] immediate task rejected group=${group.getName()} id=${group.id} task=${task.type}:${task.name}(${task.id})`,
-                        error,
-                    );
-                });
-            }
-            if (plan.queuedTasks?.[group.id]) {
-                plan.queuedTasks[group.id].forEach((task) => {
-                    console.log(
-                        `[PlanApply] enqueue task group=${group.getName()} id=${group.id} task=${task.type}:${task.name}(${task.id})`,
-                    );
-                    group.addTaskToQueue(task);
-                });
-            }
-        }
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        for (const { group, task } of verificationTargets) {
-            const activeTask = group.getCurrentTask();
-            if (activeTask?.id === task.id) {
-                eventHub.publish(withEnvelope({
-                    source: "SYSTEM",
-                    type: "PLAN_APPLY_VERIFICATION",
-                    status: "OK",
-                    groupId: group.id,
-                    groupName: group.getName(),
-                    expectedTask: {
-                        id: task.id,
-                        type: task.type,
-                        name: task.name,
-                    },
-                    activeTask: {
-                        id: activeTask.id,
-                        type: activeTask.type,
-                        name: activeTask.name,
-                    },
-                    sessionId: session.getId(),
-                } as any) as any);
-                console.log(
-                    `[PlanApply] verification ok group=${group.getName()} id=${group.id} activeTask=${activeTask.type}:${activeTask.name}(${activeTask.id})`,
-                );
-                continue;
-            }
-
-            if (!activeTask) {
-                eventHub.publish(withEnvelope({
-                    source: "SYSTEM",
-                    type: "PLAN_APPLY_VERIFICATION",
-                    status: "MISMATCH",
-                    reason: "NO_ACTIVE_TASK",
-                    groupId: group.id,
-                    groupName: group.getName(),
-                    expectedTask: {
-                        id: task.id,
-                        type: task.type,
-                        name: task.name,
-                    },
-                    activeTask: null,
-                    sessionId: session.getId(),
-                } as any) as any);
-                console.warn(
-                    `[PlanApply] verification mismatch group=${group.getName()} id=${group.id} expected=${task.type}:${task.name}(${task.id}) activeTask=none`,
-                );
-                continue;
-            }
-
-            eventHub.publish(withEnvelope({
-                source: "SYSTEM",
-                type: "PLAN_APPLY_VERIFICATION",
-                status: "MISMATCH",
-                reason: "UNEXPECTED_ACTIVE_TASK",
-                groupId: group.id,
-                groupName: group.getName(),
-                expectedTask: {
-                    id: task.id,
-                    type: task.type,
-                    name: task.name,
-                },
-                activeTask: {
-                    id: activeTask.id,
-                    type: activeTask.type,
-                    name: activeTask.name,
-                },
-                sessionId: session.getId(),
-            } as any) as any);
-            console.warn(
-                `[PlanApply] verification mismatch group=${group.getName()} id=${group.id} expected=${task.type}:${task.name}(${task.id}) activeTask=${activeTask.type}:${activeTask.name}(${activeTask.id})`,
-            );
-        }
-    }
-
     private isPipelineDisabled(): boolean {
         const value = process.env.AKELA_DISABLE_AGENT_PIPELINE?.trim().toLowerCase();
         return value === "1" || value === "true" || value === "yes" || value === "on";
-    }
-
-    private updateManifest(session: Session, patch: Record<string, unknown>): void {
-        const manifestPath = path.join(session.getDirectory(), "manifest.json");
-        let existing: Record<string, unknown> = {};
-        if (fs.existsSync(manifestPath)) {
-            existing = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
-        }
-        session.saveManifest({
-            ...existing,
-            ...patch
-        });
-    }
-
-    private appendManifestExecutionEvent(session: Session, entry: Record<string, unknown>): void {
-        const manifestPath = path.join(session.getDirectory(), "manifest.json");
-        let existing: Record<string, unknown> = {};
-        if (fs.existsSync(manifestPath)) {
-            existing = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
-        }
-        const executionEvents = Array.isArray(existing.executionEvents)
-            ? [...(existing.executionEvents as unknown[])]
-            : [];
-        executionEvents.push(entry);
-        session.saveManifest({
-            ...existing,
-            executionEvents
-        });
     }
 
     private async startLiveRuntime(session: Session, groups: Group[], monitor: ArmyCombatMonitor): Promise<void> {
