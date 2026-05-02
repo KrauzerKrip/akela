@@ -5,14 +5,15 @@ alwaysApply: true
 
 # Akela Runtime And Environment
 
-- Use `bun` for backend execution (`bun run <file>` or `bun build`).
-- Prefer running Bun through the flake shell when available: `nix develop -c bun ...`.
-- Never use `bun run tsc`.
-- Prefer direct run patterns like `bun run src/index.ts --params params.json`.
-- Prefer script shortcuts that enforce the flake runtime (for example `backend/package.json` -> `dev:nix`).
-- Ensure runtime/config changes account for required env vars:
-  - `SESSION_DB_URL`
-  - `LANGFUSE_PUBLIC_KEY`
-  - `LANGFUSE_SECRET_KEY`
-  - `LANGFUSE_HOST`
-- If command execution fails due to missing `bun`, run through flake (`nix develop -c <command>`) first.
+- Use **Bun** for the backend (`backend/`): `bun run src/index.ts`, `bun run --watch src/index.ts`, or `bun build` as appropriate.
+- Prefer the flake shell when available: `nix develop -c bun ...` (flake provides **bun** and **uv**).
+- Never use `bun run tsc` for the backend.
+- The UI lives in **`frontend/`** (Vite); run dev/build from that package (`bun run dev`, etc.).
+- Prefer script shortcuts that enforce the flake runtime where they exist (for example `backend/package.json` → `start:nix` / `dev:nix`).
+- Account for commonly used env vars when changing runtime behavior:
+  - **Persistence / telemetry**: `SESSION_DB_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`
+  - **HTTP**: `PORT` (default backend port 3000)
+  - **Python map scripts** (from `geography.ts` / visualization): `PYTHON_EXEC`, `AREA_SCRIPT_DIR`, `AREA_SCRIPT_NAME`
+  - **Other** (grep `backend/src` before relying on them): e.g. `ARMA_REQUEST_TIMEOUT_MS`, `SESSION_USER_ID`, `EXECUTION_REPORT_BATCH_SECONDS`, `AKELA_DISABLE_AGENT_PIPELINE`, `AKELA_LOG_POLL_EMPTY`
+- Google GenAI / ADK credentials follow your deployment’s normal Google auth / env conventions.
+- If commands fail due to missing `bun`, run through the flake (`nix develop -c <command>`) first.

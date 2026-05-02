@@ -15,6 +15,8 @@ Because a client can send multiple queries in a single HTTP polling request, the
 ]
 ```
 
+When Pythia delivers work from `AkelaMod.pollRequest`, the SQF loop receives a two-element array `[reqId, queries]`: each item in `queries` is `[queryType, queryArg]`. After handling all queries, Arma calls `AkelaMod.respond` with `[reqId, responsePayload]` where `responsePayload` is the array of `[queryType, queryArg, queryResult]` triples described above.
+
 ---
 
 ## Supported Requests & Return Formats
@@ -122,7 +124,7 @@ Because a client can send multiple queries in a single HTTP polling request, the
 
 ### 9. `commandMove`
 *   **Description**: Orders one or more units to move to a specific position.
-*   **Query Argument**: `[list[string], list[number]]` (`[array_of_unit_netIds, [x, y] or [x, y, z]]`)
+*   **Query Argument**: `[list[string], list[number]]` (`[array_of_unit_netIds, [x, y] or [x, y, z]]`). If the position has only two elements, Z is set with `getTerrainHeightASL` on `[x, y]` before `commandMove`.
 *   **Returns (`queryResult`)**: `boolean` (`true` if at least one target unit was found and commanded, `false` otherwise)
 *   **Example Response**:
     ```json
@@ -180,16 +182,36 @@ Because a client can send multiple queries in a single HTTP polling request, the
 
 
 ### 13. `getWaypointPosition`
-* **Description**: Get provided waypoint's position.
+* **Description**: Position of the waypoint via `waypointPosition [group, index]`.
 * **Query Argument**: `[string, number]` (`[group_netId, index]`)
-* **Returns (`queryResult`)** `[number, number, number]` (PositionAGL (Above Ground Level)). If the group is not found, returns `["error", "Group not found or is null"]`.
+* **Returns (`queryResult`)**: `[number, number, number]`. If the group is not found, returns `["error", "Group not found or is null"]`.
 
 ### 14. `getGroupLeaderPosition`
-* **Description**: Get PositionAGLS of the group's leader.
+* **Description**: Position of the group's leader via `getPos (leader group)`.
 * **Query Argument**: `string` (Group `netId`)
-* **Returns (`queryResult`)** `[number, number, number]` (PositionAGLS (Above Ground Level and Surfaces)). If the group is not found, returns `["error", "Group not found or is null"]`.
+* **Returns (`queryResult`)**: `[number, number, number]` (3D position from `getPos`). If the group is not found, returns `["error", "Group not found or is null"]`.
 
-### 15. `addEventHandlers`
+### 15. `commandLoad`
+*   **Description**: Registers the vehicle with the group (`addVehicle`), assigns alive dismounted units as cargo (`assignAsCargo`, `orderGetIn`), and spawns a monitor that fires a `LoadComplete` event when boarding finishes, the vehicle is destroyed, or a 60s timeout elapses.
+*   **Query Argument**: `[string, string]` (`[troopGroupNetId, vehicleNetId]`)
+*   **Returns (`queryResult`)**: `boolean` (`true` if both group and vehicle resolve). If either is missing, returns `["error", "Group or Vehicle not found"]`.
+
+### 16. `commandUnload`
+*   **Description**: For each alive unit in the vehicle, unassigns and orders get-out; then `leaveVehicle` on the leader's assigned vehicle.
+*   **Query Argument**: `string` (Group `netId`)
+*   **Returns (`queryResult`)**: `boolean` (`true` if the group was found). If the group is not found, returns `["error", "Group not found"]`.
+
+### 17. `stopGroup`
+*   **Description**: Runs `doStop` on every alive unit in the group.
+*   **Query Argument**: `string` (Group `netId`)
+*   **Returns (`queryResult`)**: `boolean` (`true` if the group was found). If the group is not found, returns `["error", "Group not found"]`.
+
+### 18. `clearGroupWaypoints`
+*   **Description**: Spawns a routine that may sync the current waypoint to the first unit's ASL position, then deletes all waypoints from last index down to 0.
+*   **Query Argument**: `string` (Group `netId`)
+*   **Returns (`queryResult`)**: `boolean` (`true` immediately after spawning that routine if the group exists). If the group is not found, returns `["error", "Group not found or is null"]`.
+
+### 19. `addEventHandlers`
 *   **Description**: Attaches several group-level event handlers (`CombatModeChanged`, `UnitKilled`, `WaypointComplete`, `EnemyDetected`) to the specified group. When triggered, these invoke `AkelaMod.on_event` to push payloads asynchronously back to the backend.
 *   **Query Argument**: `string` (Group `netId`)
 *   **Returns (`queryResult`)**: `boolean` (`true` if the group was found and event handlers were added). If the group is not found, returns `["error", "Group not found or is null"]`.
@@ -223,7 +245,11 @@ These events are pushed asynchronously from the Arma 3 environment directly to t
 
 ### 4. `EnemyDetected`
 *   **Description**: Triggered when the group detects a new enemy target.
-*   **Params**: `[string, string, [number, number, number], string]` (`[group_netId, newTarget_netId, positionAGLS, kind]`)
+*   **Params**: `[string, string, [number, number, number], string]` (`[group_netId, newTarget_netId, position from getPos target, type]`). `type` is one of: `Soldier`, `Tank`, `WheeledAPC`, `TrackedAPC`, `Helicopter`, `Plane`, `Ship`, `StaticWeapon`, `Car`, or `Unknown` (from `isKindOf` checks in order).
+
+### 5. `LoadComplete`
+*   **Description**: Fired asynchronously after a successful `commandLoad`, when all surviving troops have boarded, the vehicle is no longer alive, or 60 seconds have passed (whichever comes first).
+*   **Params**: `[string, string, string]` (`[group_netId, vehicle_netId, status]`). `status` is `Complete`, `VehicleDestroyed`, or `Timeout`.
 
 ### Unknown Command Fallback
 If an unsupported `queryType` is passed to SQF via Python, it returns a literal error string message.

@@ -12,5 +12,5 @@ alwaysApply: true
   - `/poll` for command polling.
   - `/respond`, `/log`, `/new-event` for event/response flow.
 - Treat SQF/JS bridge behavior as compatibility-sensitive; avoid protocol or payload drift.
-- If modifying `.sqf`, consult `/@AkelaMod/python/arma_docs.md` first.
-- In geography work (`backend/src/geography.ts`, `python/area.py`), preserve map bounding-box and terrain-layer extraction behavior for multimodal planning.
+- If modifying `.sqf`, consult **`@AkelaMod/python/arma_docs.md`** first (repo root: `@AkelaMod/python/arma_docs.md`).
+- In geography work (`backend/src/geography.ts`, `python/area.py`, and plan visualization paths that invoke Python), preserve map bounding-box and terrain-layer extraction behavior for multimodal planning.

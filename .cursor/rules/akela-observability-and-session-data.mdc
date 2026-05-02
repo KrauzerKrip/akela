@@ -5,10 +5,11 @@ alwaysApply: true
 
 # Akela Observability And Session Data
 
-- Preserve session output layout under `.data/sessions/<id>`.
-- Do not break `manifest.json` structure used for plan events, inputs, and intel summaries.
-- Keep observability instrumentation behavior stable in `backend/src/instrumentation.ts`.
-- Maintain Langfuse/OpenTelemetry lifecycle correctness:
-  - tracing initialization must run when pipeline starts.
-  - graceful shutdown must flush/export telemetry (including `sdk.shutdown()` paths).
-- When changing agent runtime flow, verify telemetry/session writes still occur across the full Intel, Plan, and Execution cycle.
+- Preserve session artifact layout under **`.data/sessions/<id>`** (paths configured via `runtimeState` / `configureRuntimeDirs()` from `backend/`).
+- Preserve **`.data/map_cache/`** semantics for cached terrain/map layers used by geography and multimodal flows.
+- Do not break **`manifest.json`** structure used for plan events, inputs, and intel summaries (consumed by tooling and **`frontend/`**).
+- Keep **`backend/src/instrumentation.ts`** behavior stable: SDK starts on import; spans export via Langfuse/OpenTelemetry.
+- Maintain lifecycle correctness:
+  - tracing must be active for agent work (pipeline imports paths that load instrumentation).
+  - graceful shutdown must flush/export telemetry (**`sdk.shutdown()`**, e.g. **`backend/src/index.ts`** SIGINT handler).
+- When changing agent or pipeline flow, verify telemetry and session writes still cover the full Intel, Plan, and Execution cycle, and that **`eventHub`** emissions remain coherent for WebSocket clients.

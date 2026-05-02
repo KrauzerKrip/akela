@@ -1,35 +1,60 @@
-# Akela - Arma 3 Agentic Commander
+# Akela — Arma 3 agentic commander
 
-## Project Description
-Akela is an LLM-powered agentic system that integrates directly with the Arma 3 game engine to act as an autonomous military commander. It relies on real-time situational awareness to run a fully automated `Intel -> Plan -> Execution` loop for simulated artificial armies. It uses Google ADK for agent implementation.
+Concise orientation for models and contributors working in this repository.
 
-### Core Architecture
-1. **Arma Connection (`backend/src/arma_connection.ts`, `backend/src/server.ts`)**
-   - Uses an Elysia HTTP server to bridge communication between the JS runtime and Arma 3.
-   - The Arma 3 extension seamlessly bridges JS runtime execution through `sqf` scripts and Pythia logic. It continuously polls `/poll` for game commands and sends real-time game events/responses to `/respond`, `/log`, and `/new-event`.
-   
-2. **Domain Models (`backend/src/army.ts`, `backend/src/combat.ts`)**
-   - The game state is abstracted into strongly typed domain entities such as `Army`, `Group`, `Unit`, `Task` (Push, Assault, Retreat, Wait), and `Waypoint`.
-   - `ArmyCombatMonitor` tracks real-time engagement mechanics, casualties, and contact clustering.
-   - Converts raw game states into comprehensible Situation Reports (SITREPs) via `yaml` text blocks for LLMs.
+## What this project is
 
-3. **Agentic Pipeline (`backend/src/agent.ts`, `backend/src/index.ts`)**
-   Powered by `@google/adk` and `@google/genai` to utilize multi-modal conversational Gemini models.
-   - **IntelAgent**: Analyzes overhead intelligence images (satellite mappings, framework primitives) and textual observation data.
-   - **PlanAgent**: Combines SITREPs and Intelligence reports to devise tactical macro-plans. It uses a `PlanSandbox` to simulate the JS code that it writes to interact with `Group` instances. It uses image generation tool callbacks to visually scrutinize its plan on a drawn map.
-   - **ExecutionAgent**: Takes the constructed plan and reacts to live runtime feedback via streamed SITREP updates, pivoting dynamically.
+Akela is an LLM-driven **Intel → Plan → Execution** pipeline that connects to **Arma 3** through an HTTP bridge and optional **@AkelaMod** SQF/Python glue. It reasons over tactical state (armies, groups, tasks, combat events), runs **sandboxed plan code** against domain APIs, and streams structured events to a **React “war room”** UI.
 
-4. **Geography & Map Extraction (`backend/src/geography.ts`)**
-   - Dynamically generates map bounding boxes derived from local area coordinates.
-   - Spawns python sub-processors (`python/area.py`) to scrape exact topological image layers directly from Arma's datasets representing frames, grids, and satellite terrain for multimodal LLM vision.
+Implementation stack:
 
-5. **Observability & Evaluation (`backend/src/instrumentation.ts`)**
-   - Integrates Langfuse for runtime tracing through OpenTelemetry and prompt management.
-   - Requires tracing initialization and graceful shutdown inside the `AgenticPipeline` to correctly export telemetry batches via `sdk.shutdown()`.
+- **Agents**: Google ADK (`@google/adk`) + Gemini models via `@google/genai` (model IDs are set in agent code, e.g. `IntelAgent`).
+- **Backend**: **Bun**, **Elysia** (`backend/src/server.ts`), typed domain layer (`army.ts`, `combat.ts`), **Langfuse** OpenTelemetry export (`instrumentation.ts`).
+- **Plan execution**: **QuickJS** sandbox (`plan/sandbox.ts`, `plan/bootstrap.js`) with plan translation and transport validation.
+- **Terrain / maps**: **Python** (`python/area.py` and related scripts) invoked from `geography.ts` / visualization; outputs feed multimodal prompts and caching under `.data/map_cache`.
 
-## What a model should know to work with this code
-1. **Environment Setup**: Define `SESSION_DB_URL` (for local @google/adk state) and Langfuse keys (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`) in `.env` for the telemetry to correctly boot up without failure.
-2. **Command Line runner**: Use `bun` to run the backend. **DO NOT USE `bun run tsc`**. Run files natively with `bun run <file>`. (e.g. `bun run src/index.ts --params params.json`) or bun build. Before using bun active flake so bun registers in the shell.
-3. **Arma 3 SQF scripting**: If instructed to modify `.sqf` script files, consult the partial Arma 3 documentation explicitly located at `/@AkelaMod/python/arma_docs.md`.
-4. **Session Output Storage**: All runtime events are logged and mapped to isolated directories generated in `.data/sessions/<id>`. This includes a `manifest.json` detailing the `Plan` events, user inputs, and intel summaries.
-5. **Agent Tools & Sandbox**: LLM tools are strictly typed leveraging `zod` for argument definitions and run within custom asynchronous contexts. Tactical group interactions are deeply rooted within Domain Events in `Group` objects, resolving JS promises hooked accurately through listeners (`ArmyCombatMonitor`).
+## Repository layout
+
+| Area | Role |
+|------|------|
+| `backend/` | Elysia server, pipeline, agents, session lifecycle, Arma connector |
+| `frontend/` | Vite + React war room (map, timeline, live WebSocket feed, commander console) |
+| `python/` | Map/terrain extraction (`uv` project, Python ≥ 3.13) |
+| `@AkelaMod/` | Arma-side bridge (SQF/Python); see `@AkelaMod/python/arma_docs.md` before editing `.sqf` |
+| `.data/sessions/<id>/` | Per-session artifacts including `manifest.json` (plan events, inputs, intel summaries) |
+| `.data/map_cache/` | Cached map layers |
+
+## Core runtime flow
+
+1. **`backend/src/index.ts`** wires `ArmaConnector`, calls `configureRuntimeDirs()`, constructs **`SessionInitializer`** with a **pipeline factory**, and **`startServer`**.
+2. **`SessionInitializer`** (`session_initializer.ts`) builds **`Army`**, **`Group[]`**, **`ArmyCombatMonitor`**, registers **`eventHub`** listeners, and starts periodic **STATE_TICK** style updates for connected clients.
+3. **`FullPipeline`** (`pipeline.ts`) orchestrates **IntelAgent → PlanAgent → ExecutionAgent**, persists ADK sessions via **`DatabaseSessionService`** when `SESSION_DB_URL` is set, and surfaces **`NewPlanEvent`**, **`AgentResponseEvent`**, **`LLmDecisionStartEvent`**, etc., through **`eventHub`** (also pushed over WebSockets from the server).
+4. **`PremadeIntelPipeline`** (same file) skips **`IntelAgent`** and injects fixed intel text — swap the factory in `index.ts` when debugging planning without vision.
+
+Do **not** break the **Intel → Plan → Execution** contract or blur responsibilities between **`IntelAgent`**, **`PlanAgent`**, and **`ExecutionAgent`** (`agent.ts`).
+
+## Arma bridge (compatibility-sensitive)
+
+- **`arma_connection.ts`** + **`server.ts`**: game polls **`/poll`**; events/responses use **`/respond`**, **`/log`**, **`/new-event`** (and related HTTP routes). Treat payloads as a stable protocol for the mod/extension.
+- Geography: preserve bounding-box and terrain-layer extraction semantics in **`geography.ts`** and **`python/area.py`**.
+
+## Observability and sessions
+
+- **Langfuse**: tracing via **`instrumentation.ts`**; requires **`LANGFUSE_PUBLIC_KEY`**, **`LANGFUSE_SECRET_KEY`**, **`LANGFUSE_HOST`**. **`sdk.shutdown()`** must run on graceful shutdown (see **`index.ts`** SIGINT handler) so spans flush.
+- Preserve **`.data/sessions/<id>`** layout and **`manifest.json`** shape expected by tooling and the frontend.
+
+## What a model should know before editing code
+
+1. **Run the backend with Bun** from `backend/`: `bun run src/index.ts` (or `bun run --watch …`). **Do not use `bun run tsc`.** Prefer **`nix develop -c bun …`** when Bun is not on PATH (`flake.nix` provides **bun** and **uv**).
+2. **Environment**
+   - **`SESSION_DB_URL`**: ADK **`DatabaseSessionService`** (SQLite URL as used by the pipeline).
+   - **Langfuse**: keys/host above.
+   - **`PORT`**: HTTP server (default **3000**).
+   - **Python helpers**: **`PYTHON_EXEC`**, **`AREA_SCRIPT_DIR`**, **`AREA_SCRIPT_NAME`** (defaults assume repo-relative `../python` and `area.py`).
+   - **Optional**: **`ARMA_REQUEST_TIMEOUT_MS`**, **`SESSION_USER_ID`**, **`EXECUTION_REPORT_BATCH_SECONDS`**, **`AKELA_DISABLE_AGENT_PIPELINE`**, **`AKELA_LOG_POLL_EMPTY`** (see usages in `backend/src`).
+   - Google GenAI / ADK: configure credentials the way your deployment expects (ADK picks up standard Google auth / env conventions for your environment).
+3. **SQF changes**: read **`@AkelaMod/python/arma_docs.md`** first.
+4. **Tools and typing**: agent tools and schemas stay strict (**`zod`**); plan code runs only inside **`PlanSandbox`** (QuickJS), not arbitrary Node.
+5. **Frontend**: lives under **`frontend/`**; connects to backend APIs/WebSocket for live **`eventHub`** traffic — keep event types compatible with **`backend/src/event.ts`** when changing contracts.
+
+For human-oriented setup and commands, see the repository **`README.md`**.

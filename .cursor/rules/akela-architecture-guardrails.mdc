@@ -5,12 +5,15 @@ alwaysApply: true
 
 # Akela Architecture Guardrails
 
-- Preserve the `Intel -> Plan -> Execution` pipeline contract in `backend/src/agent.ts` and `backend/src/index.ts`.
+- Preserve the **Intel → Plan → Execution** contract end-to-end:
+  - Orchestration: `backend/src/pipeline.ts` (`FullPipeline`, optional `PremadeIntelPipeline`), wired from `backend/src/index.ts` via `SessionInitializer` (`backend/src/session_initializer.ts`).
+  - Agent implementations: `backend/src/agent.ts`.
 - Keep agent responsibilities distinct:
-  - `IntelAgent`: intelligence/image analysis.
-  - `PlanAgent`: plan synthesis and sandboxed plan-code reasoning.
-  - `ExecutionAgent`: runtime adaptation based on streamed SITREPs.
+  - `IntelAgent`: intelligence / multimodal analysis.
+  - `PlanAgent`: plan synthesis; plan code runs only inside **`PlanSandbox`** (`backend/src/plan/sandbox.ts`, QuickJS + `plan/bootstrap.js`), not arbitrary Node.
+  - `ExecutionAgent`: runtime adaptation from streamed SITREPs and game feedback.
 - Maintain strongly typed domain semantics in `backend/src/army.ts` and `backend/src/combat.ts`:
   - `Army`, `Group`, `Unit`, `Task`, `Waypoint`.
   - `ArmyCombatMonitor` event-driven combat behavior.
 - Do not weaken typed tool/sandbox boundaries; preserve strict schemas (for example, `zod`) and async context safety.
+- **`backend/src/event.ts`** + **`eventHub`**: server broadcasts to WebSocket clients; changing event shapes or types can break **`frontend/`** — keep contracts aligned or update both sides.
