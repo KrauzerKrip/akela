@@ -127,16 +127,16 @@ export class GameMap {
         // Define the 4 specific generation tasks
         const tasks = [
             // 1. frame_primitives: No satellite, has frame and grid
-            execAsync(buildCmd('frame_primitives', '--no-sat --frame --grid')),
+            execAsync(buildCmd('frame_primitives', '--no-sat --frame --grid --horizontal-contour-labels')),
 
             // 2. frame_satellite: Has satellite, has frame and grid
-            execAsync(buildCmd('frame_satellite', '--frame --grid')),
+            execAsync(buildCmd('frame_satellite', '--frame --grid --horizontal-contour-labels')),
 
             // 3. primitives: No satellite, no frame
-            execAsync(buildCmd('primitives', '--no-sat')),
+            execAsync(buildCmd('primitives', '--no-sat --horizontal-contour-labels')),
 
             // 4. satellite: Has satellite, no frame
-            execAsync(buildCmd('satellite', ''))
+            execAsync(buildCmd('satellite', '--horizontal-contour-labels'))
         ];
 
         try {

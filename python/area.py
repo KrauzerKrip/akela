@@ -8,7 +8,203 @@ import matplotlib.ticker as ticker
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
 from matplotlib.collections import PolyCollection, LineCollection
+from matplotlib.path import Path as MplPath
+from matplotlib import patheffects
 from PIL import Image, ImageEnhance
+
+
+def _filter_candidates_min_sep_screen(ax, candidates, min_sep_px):
+    """Drop candidates whose label anchor falls within min_sep_px of an earlier keeper.
+
+    Uses screen (pixel) distance — unlike bbox overlap this matches how viewers perceive
+    collisions and avoids rejecting almost everything when arc-length spacing follows a
+    winding contour (many candidates stack close in x/y despite large contour spacing).
+    """
+    if min_sep_px <= 0:
+        return list(candidates)
+
+    cell = max(min_sep_px * 0.5, 24.0)
+    grid = {}
+    min_r2 = float(min_sep_px) ** 2
+    filtered = []
+
+    def neighbors_conflict(sx, sy):
+        ix = int(sx // cell)
+        iy = int(sy // cell)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for ox, oy in grid.get((ix + dx, iy + dy), ()):
+                    dxp = sx - ox
+                    dyp = sy - oy
+                    if dxp * dxp + dyp * dyp < min_r2:
+                        return True
+        return False
+
+    def remember(sx, sy):
+        ix = int(sx // cell)
+        iy = int(sy // cell)
+        grid.setdefault((ix, iy), []).append((sx, sy))
+
+    for item in candidates:
+        data_xy, _, _ = item
+        sx, sy = ax.transData.transform((float(data_xy[0]), float(data_xy[1])))
+        if neighbors_conflict(sx, sy):
+            continue
+        remember(sx, sy)
+        filtered.append(item)
+    return filtered
+
+
+def _contour_ring_centroid_data(verts):
+    """Centroid of a closed 2D ring in data coordinates (verts from contour Path)."""
+    v = np.asarray(verts, dtype=float)
+    if len(v) < 3:
+        return np.mean(v, axis=0)
+    if np.allclose(v[0], v[-1]):
+        v = v[:-1]
+    if len(v) < 3:
+        return np.mean(v, axis=0)
+    x, y = v[:, 0], v[:, 1]
+    x2 = np.concatenate([x, x[:1]])
+    y2 = np.concatenate([y, y[:1]])
+    cross = x2[:-1] * y2[1:] - x2[1:] * y2[:-1]
+    area = 0.5 * np.sum(cross)
+    if abs(area) < 1e-18:
+        return np.mean(v, axis=0)
+    cx = np.sum((x2[:-1] + x2[1:]) * cross) / (6.0 * area)
+    cy = np.sum((y2[:-1] + y2[1:]) * cross) / (6.0 * area)
+    return np.array([cx, cy])
+
+
+def add_dense_contour_labels(ax, cs, fmt='%1.0fm', color='white', fontsize=16,
+                             spacing_px=280, min_segment_px=50, zorder=10,
+                             horizontal_only=False,
+                             suppress_overlapping_labels=True,
+                             overlap_min_sep_px=None,
+                             overlap_margin_px=6):
+    """Place elevation text along contours at regular spacing in screen pixels.
+
+    spacing_px is arc distance along the contour in display pixels (not map meters): larger
+    values yield fewer labels per line.
+
+    Matplotlib's clabel adds at most one label per connected contour segment and
+    skips segments shorter than ~10× the label width in pixels, which yields very
+    few labels on high-resolution tactical crops despite dense contour geometry.
+
+    horizontal_only: if True, labels use rotation=0 instead of aligning to the contour.
+
+    Closed rings (hilltops, sinks) often have a short perimeter in screen pixels; those were
+    skipped by min_segment_px alone — one label is placed at the ring centroid in that case.
+
+    suppress_overlapping_labels: greedily drop later candidates whose anchor lies within
+    overlap_min_sep_px screen pixels of an earlier keeper (approximates label+stroke width).
+
+    overlap_min_sep_px: default derived from fontsize + overlap_margin_px when None.
+    """
+    spacing_px = max(40.0, float(spacing_px))
+
+    outline = [
+        patheffects.Stroke(linewidth=4.0, foreground='black'),
+        patheffects.Normal(),
+    ]
+    trans = cs.get_transform()
+    inv_data = ax.transData.inverted()
+
+    def label_text_for_level(level):
+        if isinstance(fmt, str):
+            return fmt % level
+        if callable(getattr(fmt, 'format_ticks', None)):
+            return fmt.format_ticks([level])[-1]
+        if callable(fmt):
+            return fmt(level)
+        return str(level)
+
+    def place_label(data_xy, rotation, level):
+        txt = label_text_for_level(level)
+        t_art = ax.text(
+            data_xy[0], data_xy[1], txt,
+            ha='center', va='center',
+            rotation=rotation,
+            fontsize=fontsize,
+            color=color,
+            zorder=zorder,
+            clip_on=True,
+        )
+        t_art.set_path_effects(outline)
+
+    candidates = []
+
+    for icon, lev in enumerate(cs.levels):
+        path = cs.get_paths()[icon]
+        for subpath in path._iter_connected_components():
+            verts = np.asarray(subpath.vertices, dtype=float)
+            if len(verts) < 2:
+                continue
+            xy_screen = trans.transform(verts)
+            dxy = np.diff(xy_screen[:, 0]), np.diff(xy_screen[:, 1])
+            ds = np.hypot(dxy[0], dxy[1])
+            if not np.any(ds > 0):
+                continue
+            cumlen = np.concatenate([[0.0], np.cumsum(ds)])
+            total_px = cumlen[-1]
+
+            codes = subpath.codes
+            closed_ring = (
+                codes is not None
+                and len(codes) == len(verts)
+                and len(codes) > 0
+                and codes[-1] == MplPath.CLOSEPOLY)
+            if not closed_ring and len(verts) >= 3:
+                closed_ring = np.allclose(
+                    verts[0], verts[-1], rtol=0.0, atol=5.0)
+
+            chord_px = float(np.linalg.norm(xy_screen[0] - xy_screen[-1]))
+            small_screen_loop = (
+                len(verts) >= 4
+                and chord_px <= 36.0
+                and total_px + 1e-6 >= 2.2 * chord_px)
+
+            # Tiny loops (hilltops / sinks): perimeter is short in px so they failed the old
+            # min_segment_px gate; matplotlib does not always emit CLOSEPOLY / duplicate ends.
+            if total_px < min_segment_px:
+                if closed_ring or small_screen_loop:
+                    candidates.append(
+                        (_contour_ring_centroid_data(verts), 0.0, lev))
+                continue
+
+            starts = np.arange(spacing_px * 0.5, total_px, spacing_px, dtype=float)
+            if len(starts) == 0:
+                starts = np.array([total_px * 0.5])
+
+            for dist in starts:
+                i = int(np.searchsorted(cumlen, dist, side='right') - 1)
+                i = max(0, min(i, len(cumlen) - 2))
+                span = cumlen[i + 1] - cumlen[i]
+                if span <= 1e-9:
+                    continue
+                t = (dist - cumlen[i]) / span
+                sx = xy_screen[i, 0] * (1 - t) + xy_screen[i + 1, 0] * t
+                sy = xy_screen[i, 1] * (1 - t) + xy_screen[i + 1, 1] * t
+                if horizontal_only:
+                    rotation = 0.0
+                else:
+                    dx = xy_screen[i + 1, 0] - xy_screen[i, 0]
+                    dy = xy_screen[i + 1, 1] - xy_screen[i, 1]
+                    rotation = np.rad2deg(np.arctan2(dy, dx))
+                    rotation = (rotation + 90) % 180 - 90
+
+                data_xy = inv_data.transform((sx, sy))
+                candidates.append((data_xy, rotation, lev))
+
+    if suppress_overlapping_labels and candidates:
+        sep = overlap_min_sep_px
+        if sep is None:
+            sep = max(52.0, float(fontsize) * 3.4 + float(overlap_margin_px))
+        candidates = _filter_candidates_min_sep_screen(ax, candidates, sep)
+
+    for data_xy, rotation, lev in candidates:
+        place_label(data_xy, rotation, lev)
+
 
 def add_features(ax, min_x, max_x, min_y, max_y, data_dir):
     def check_bbox(pts):
@@ -111,6 +307,23 @@ def main():
     parser_ext.add_argument("--no-sat", action="store_true", help="Do not draw background satellite image (primitives only)")
     parser_ext.add_argument("--frame", action="store_true", help="Draw frame (legend, axis names, numbers)")
     parser_ext.add_argument("--grid", action="store_true", help="Draw grid")
+    parser_ext.add_argument(
+        "--horizontal-contour-labels",
+        action="store_true",
+        help="Keep contour elevation labels horizontal (ignore contour tangent)",
+    )
+    parser_ext.add_argument(
+        "--no-suppress-overlapping-contour-labels",
+        action="store_true",
+        help="Allow contour labels to overlap for maximum density (debugging / preference)",
+    )
+    parser_ext.add_argument(
+        "--contour-label-spacing-px",
+        type=float,
+        default=280,
+        metavar="PX",
+        help="Along-contour label spacing in screen pixels (larger = fewer labels per line)",
+    )
 
     parser_frame = subparsers.add_parser("frame", help="Add frame/grid to an existing image")
     parser_frame.add_argument("image", type=str, help="Input image path")
@@ -227,7 +440,10 @@ def main():
             dpi = 100
             
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
-        
+        ax.set_xlim(arma_min_x, arma_max_x)
+        ax.set_ylim(arma_min_y, arma_max_y)
+        ax.set_aspect('equal')
+
         if not args.no_sat and sat_crop is not None:
             ax.imshow(sat_crop, extent=[arma_min_x, arma_max_x, arma_min_y, arma_max_y], zorder=0)
         else:
@@ -243,10 +459,23 @@ def main():
             max_ele = np.nanmax(dem_crop)
             min_ele = np.nanmin(dem_crop)
             if max_ele - min_ele > 1:
-                levels = np.arange(0, max_ele + 20, 20)
-                if len(levels) > 0:
+                step_m = 20
+                lev0 = np.floor(min_ele / step_m) * step_m
+                levels = np.arange(lev0, max_ele + step_m, step_m)
+                if levels.size > 0:
                     cs = ax.contour(X, Y, dem_crop, levels=levels, colors='white', linewidths=1.0, alpha=0.9, zorder=2)
-                    ax.clabel(cs, inline=True, fontsize=12, colors='white', fmt='%1.0fm', zorder=10)
+                    add_dense_contour_labels(
+                        ax,
+                        cs,
+                        fmt='%1.0fm',
+                        color='white',
+                        fontsize=16,
+                        spacing_px=args.contour_label_spacing_px,
+                        zorder=10,
+                        horizontal_only=args.horizontal_contour_labels,
+                        suppress_overlapping_labels=(
+                            not args.no_suppress_overlapping_contour_labels),
+                    )
             else:
                 print("Note: Very flat area, no contours drawn.")
 
