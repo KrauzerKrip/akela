@@ -308,6 +308,39 @@ groups["Bravo"]
     sandbox.dispose();
 }
 
+async function testShuttleMacroPassesValidation() {
+    const { army, alpha, bravo } = await setupArmy();
+    const sandbox = await PlanSandbox.create();
+    const code = `
+const ifv = groups["Bravo"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+Shuttle({
+  transport: groups["Bravo"],
+  vehicle: ifv,
+  passengers: groups["Alpha"],
+  route: [{ x: 1000, y: 1000 }],
+  name: "Alpha shuttle to LZ",
+});
+`;
+    const plan = await sandbox.makePlan(army, code);
+
+    const passengerTasks = plan.queuedTasks[alpha.id] ?? [];
+    const transportTasks = plan.queuedTasks[bravo.id] ?? [];
+    assert.equal(passengerTasks.length, 3, "Passenger group should have Embark, Wait, Disembark queued");
+    assert.equal(passengerTasks[0].type, "EMBARK");
+    assert.equal(passengerTasks[1].type, "WAIT");
+    assert.equal(passengerTasks[2].type, "DISEMBARK");
+
+    assert.equal(transportTasks.length, 2, "Transport group should have Wait, Push queued");
+    assert.equal(transportTasks[0].type, "WAIT");
+    assert.equal(transportTasks[1].type, "PUSH");
+
+    const embarkTaskId = passengerTasks[0].id;
+    const embarkReactions = plan.taskReactions[embarkTaskId];
+    assert.ok(embarkReactions, "Shuttle should register reactions for the Embark task");
+    assert.ok(embarkReactions.TIMEOUT, "Shuttle should auto-install a default TIMEOUT reaction on the Embark task");
+    sandbox.dispose();
+}
+
 async function testTransportValidationRejectsVehicleOwnedDisembark() {
     const { army } = await setupArmy();
     const sandbox = await PlanSandbox.create();
@@ -346,6 +379,7 @@ async function test() {
     await testTransportValidationRejectsInfantryMovementWhileMounted();
     await testTransportValidationRejectsMissingTimeoutHandler();
     await testTransportValidationRejectsVehicleOwnedDisembark();
+    await testShuttleMacroPassesValidation();
     console.log("All sandbox reaction tests passed.");
 }
 

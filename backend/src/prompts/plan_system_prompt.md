@@ -30,8 +30,13 @@ All tasks inherit from a base class and support `.on(Event, callback)` and `.sig
 | **Report** | `new Report(message, name)` | Strategic Signal: Triggers a re-evaluation by the Execution Agent. Use sparingly. |
 | **Wait** | `new Wait(syncPoint, name)` | Pause execution until a specific Signal is received. Supports `.withCombatBehaviour()`. |
 | **Sequence** | `new Sequence(name)` | A container for chaining tasks using `.then(task)`. |
-| **Embark** | `new Embark(vehicle, name)` | Commands group to embark the vehicle. To prevent vehicles from moving before the group embarks, you must use a SyncPoint to sync embraking complete. |
-| **Disembark** | `new Disembark(name)` | Commands group to disembark their vehicle. |
+| **Embark** | `new Embark(vehicle, name)` | Low-level. Commands a single group to embark a vehicle. Prefer `Shuttle` (below) for transport. |
+| **Disembark** | `new Disembark(name)` | Low-level. Commands a group to disembark their vehicle. Prefer `Shuttle` (below) for transport. |
+
+## Planning Macros
+| Macro | Signature | Description |
+| :--- | :--- | :--- |
+| **Shuttle** | `Shuttle({ transport, vehicle, passengers, route, name, onEmbarkTimeout? })` | Preferred way to move infantry by vehicle. Side-effects both groups, generates required SyncPoints, and installs a default Embark `TIMEOUT` Report fallback. Returns `{ embarkDone, dropoffReady, dismounted }` if you need to chain follow-ups. |
 
 ## Task Modifiers & Methods
 * **`.withCombatBehaviour(mode)`**: Sets unit state (e.g., "CARELESS", "AWARE", "COMBAT", "STEALTH").
@@ -41,45 +46,52 @@ All tasks inherit from a base class and support `.on(Event, callback)` and `.sig
 ## Synchronization
 * **`new SyncPoint(name)`**: Creates a unique signal used to coordinate different groups. Pass this into a `Wait` task or a `.signals()` modifier.
 
-## Transport Contract (Mandatory)
-When transporting infantry with a vehicle, follow this exact contract:
+## Transport (use `Shuttle`)
+For infantry-by-vehicle transport, **use the `Shuttle` macro** — it generates the entire embark/move/dismount handshake correctly and is validated by construction. Do NOT hand-write `Embark`/`Wait`/`Disembark` chains unless `Shuttle` cannot express what you need.
+
+**Recipe**:
+```js
+const ifv = groups["Echo 1-1 IFV"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
+
+const shuttle = Shuttle({
+  transport:  groups["Echo 1-1 IFV"],
+  vehicle:    ifv,
+  passengers: groups["Echo 1-2 Assault"],
+  route:      [{ x: 21000, y: 19300 }],
+  name:       "Echo shuttle to LZ1",
+  // optional: override the default Report-on-timeout fallback
+  onEmbarkTimeout: (event, g) => {
+    g.executeImmediately(new Report("Echo embark failed; aborting transport", "Echo embark failure"));
+  },
+});
+
+// `shuttle.dismounted` lets you chain follow-ups on the passenger group.
+groups["Echo 1-2 Assault"].enqueue(new Assault([{ x: 21200, y: 19400 }], "Echo assault objective"));
+
+// `shuttle.dropoffReady` / `shuttle.dismounted` are also available for the transport group.
+groups["Echo 1-1 IFV"].enqueue(new Wait(shuttle.dismounted, "Hold until infantry is off"))
+  .enqueue(new Retreat([{ x: 22000, y: 19000 }], "Withdraw to rally"));
+```
+
+`Shuttle` automatically:
+- generates the three SyncPoints (`embarkDone`, `dropoffReady`, `dismounted`).
+- enqueues `Embark` -> `Wait(dropoffReady)` -> `Disembark` on the passenger group.
+- enqueues `Wait(embarkDone)` -> `Push(route)` on the transport group.
+- attaches a `TIMEOUT` reaction to the `Embark` task. If you don't pass `onEmbarkTimeout`, the default fires a strategic `Report` so the Execution Agent can re-plan.
+
+### Advanced primitives (only when `Shuttle` does not fit)
+If you must hand-roll the contract (e.g. multi-leg dropoffs, hot extracts), follow these rules — the validator will reject plans that violate them:
 1. Infantry group queues `Embark(vehicle).signals(embarkDone)`.
 2. Vehicle group queues `Wait(embarkDone)` before any movement.
-3. Vehicle group executes movement (`Push`/`Assault`) while infantry is mounted.
-4. Vehicle group signals dropoff readiness after movement (for example `Push(...).signals(dropoffReady)`).
-5. Infantry group waits on `Wait(dropoffReady)`, then queues `Disembark(...).signals(dismounted)`.
-6. If embark can fail, include a `TIMEOUT` reaction (task-level or group-level fallback) for the infantry group.
+3. Vehicle group performs movement, signals `dropoffReady` on its final `Push`.
+4. Infantry group `Wait(dropoffReady)` then `Disembark(...).signals(dismounted)`.
+5. Attach a `TIMEOUT` reaction to the `Embark` task (or the infantry group).
 
-**CRITICAL RULES**:
-* While infantry is mounted, movement tasks must be issued to the vehicle group, not the infantry group.
-* Infantry movement (`Push`/`Assault`/`Retreat`) after `Embark` is allowed only after a synced `Disembark`.
-* Do not move the vehicle before the embark sync has completed.
-* `Disembark` must be assigned to the transported infantry group, not the vehicle-owner group.
-
-**Good example**:
-```js
-const embarkDone = new SyncPoint("echo_embark_done");
-const dropoffReady = new SyncPoint("echo_dropoff_ready");
-const dismounted = new SyncPoint("echo_dismounted");
-const ifv = groups["Echo 1-1 IFV"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
-
-groups["Echo 1-2 Assault"]
-  .enqueue(new Embark(ifv, "Echo Assault embark").signals(embarkDone))
-  .enqueue(new Wait(dropoffReady, "Wait for IFV dropoff"))
-  .enqueue(new Disembark("Echo assault dismount").signals(dismounted));
-
-groups["Echo 1-1 IFV"]
-  .enqueue(new Wait(embarkDone, "Wait until embarked"))
-  .enqueue(new Push([{ x: 21000, y: 19300 }], "Transport to assault line").signals(dropoffReady));
-```
-
-**Bad example (invalid order)**:
-```js
-const ifv = groups["Echo 1-1 IFV"].getVehiclesByName("B_APC_Wheeled_01_cannon_F")[0];
-groups["Echo 1-2 Assault"].enqueue(new Embark(ifv, "Embark")); // no signal
-groups["Echo 1-1 IFV"].enqueue(new Push([{ x: 21000, y: 19300 }], "Move now")); // moves before embark sync
-groups["Echo 1-2 Assault"].enqueue(new Push([{ x: 21200, y: 19400 }], "Advance mounted")); // infantry movement while mounted
-```
+**Hard rules**:
+* While infantry is mounted, movement tasks must be on the vehicle group, not the infantry.
+* Infantry movement (`Push`/`Assault`/`Retreat`) after `Embark` is only allowed after a synced `Disembark`.
+* Do not move the vehicle before the embark sync.
+* `Disembark` belongs to the passenger group, never the vehicle owner.
 
 ## Group Control (The `groups` Object)
 Every group (e.g., `groups["Alpha"]`) has access to the following methods:
@@ -98,7 +110,7 @@ Reactive logic in `.on()` receives one of the following event objects:
     * *Kinds: "Soldier", "Tank", "WheeledAPC", "TrackedAPC", "Helicopter", "Plane", "Ship", "StaticWeapon", "Car"*
 * **`Event.ENGAGED_IN_COMBAT`**: `{ type: "ENGAGED_IN_COMBAT" }`
 * **`Event.COMBAT_ENDED`**: `{ type: "COMBAT_ENDED" }`
-* **`Event.TIMEOUT`**: `{type: "TIMEOUT}`
+* **`Event.TIMEOUT`**: `{ type: "TIMEOUT" }`
     * *Used with Embark task to handle if units of the group didn't embark in time*
 
 **Note on Event Listeners (`.on()`)**:
@@ -107,10 +119,13 @@ Reactive logic in `.on()` receives one of the following event objects:
 * **Priority rule**: If both task-level and group-level callbacks exist for the same event, only the task-level callback executes for that event.
 * **Registration rule**: Within the same scope and event type, the latest `.on(...)` assignment replaces the previous one.
 
+**Reaction callbacks and closures (critical)**:
+Reactive callbacks are **persisted by serializing the function source** (`function.toString()`), not by keeping a live JavaScript closure. When the runtime reloads or rehydrates a reaction, that source is evaluated again **without** the original lexical environment. **Variables captured from outer scopes are unreliable** after persistence (e.g. numeric thresholds, `SyncPoint` references, vehicle handles stored in outer `const`). **Safe pattern**: use only `event`, `group`/`g`, literals written inside the callback body, and group-derived values (`group.getCasualtyRatio()`, etc.). Inline constants and message strings directly in the callback; do not depend on captured locals. Built-ins like `Shuttle`'s default embark timeout avoid this by baking needed strings into the persisted source.
+
 # SANDBOX CONSTRAINTS & RULES
 1. **Valid JS**: You must provide valid QuickJS-compatible code avoiding errors.
 2. **Scope**: Do not attempt to access `window` or external APIs. Use only the provided library.
-3. **Callback Safety**: Inside a callback, only use the `group` (or `g`) argument provided by the function. Never reference `groups["Name"]` inside a reactive trigger.
+3. **Callback Safety**: Inside a callback, only use the `group` (or `g`) argument provided by the function. Never reference `groups["Name"]` inside a reactive trigger. Do not rely on **closure capture** from outer declarations — see **Reaction callbacks and closures** under Event System.
 4. **Coordinate Rule**: Always format as `{ x: number, y: number }` and with grid multiplied by 100 (e.g. not {x: 209, y: 193} but { x: 20900, y: 19300 }).
 5. **Executing Tasks in Callbacks (RIGHT VS WRONG)**:
     * ❌ WRONG: `g.report("Heavy casualties!")` (Method does not exist)

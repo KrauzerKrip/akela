@@ -114,6 +114,43 @@ class SyncPoint {
     }
 }
 
+global.Shuttle = function ({ transport, vehicle, passengers, route, name, onEmbarkTimeout }) {
+    if (!transport || !vehicle || !passengers || !Array.isArray(route) || route.length === 0) {
+        throw new Error("Shuttle: transport, vehicle, passengers, and non-empty route are required");
+    }
+    const label = name || "Shuttle";
+    const embarkDone = new SyncPoint(label + "__embark_done");
+    const dropoffReady = new SyncPoint(label + "__dropoff_ready");
+    const dismounted = new SyncPoint(label + "__dismounted");
+
+    const embark = new Embark(vehicle, label + " embark").signals(embarkDone);
+    let timeoutCb;
+    if (typeof onEmbarkTimeout === "function") {
+        timeoutCb = onEmbarkTimeout;
+    } else {
+        // Bake the label into the source string so the callback stays correct
+        // after sandbox rehydration (preserveReactions mode disposes the arena
+        // and re-evals the function from `__source`, dropping any closure vars).
+        const labelLiteral = JSON.stringify(label);
+        timeoutCb = (0, eval)(
+            "(event, g) => { g.executeImmediately(new Report(\"Embark timed out for \" + " + labelLiteral
+            + ", " + labelLiteral + " + \" embark timeout\")); }"
+        );
+    }
+    embark.on(Event.TIMEOUT, timeoutCb);
+
+    passengers
+        .enqueue(embark)
+        .enqueue(new Wait(dropoffReady, label + " wait dropoff"))
+        .enqueue(new Disembark(label + " dismount").signals(dismounted));
+
+    transport
+        .enqueue(new Wait(embarkDone, label + " wait embark"))
+        .enqueue(new Push(route, label + " transport push").signals(dropoffReady));
+
+    return { embarkDone, dropoffReady, dismounted };
+};
+
 // global.Group = class {
 //     constructor(id, name) {
 //         this.id = id;
