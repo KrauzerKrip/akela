@@ -30,11 +30,15 @@ export class Session {
         return path.join(this.dir, "planning");
     }
 
+    public getIntelDirectory(): string {
+        return path.join(this.dir, "intel");
+    }
+
     /**
      * Creates the session directory and the required sub-directories.
      */
     public initialize(): void {
-        const subDirectories = ['areas', 'planning'];
+        const subDirectories = ['areas', 'planning', 'intel'];
 
         subDirectories.forEach((subDir) => {
             const targetPath = path.join(this.dir, subDir);
