@@ -1,6 +1,7 @@
 import { Sitrep, GroupSitrepStatus } from "./sitrep";
 import { Point } from "./geography";
 import { LangfuseClient } from "@langfuse/client";
+import { INTEL_UNIT_TYPES, StructuredIntelResult } from "./intel/models";
 
 export interface SitrepFormatter {
     format(sitrep: Sitrep): string;
@@ -81,6 +82,7 @@ export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
         const observationString = observations.join("\n");
         const variables: Record<string, string> = {
             "OBSERVATION_BLOCK": observationString,
+            "INTEL_MARK_UNIT_TYPES": INTEL_UNIT_TYPES.join(", "),
         };
         const compiled = prompt.compile(variables) as { role: string; content: string }[];
         const system = compiled.find(m => m.role === "system")?.content || "";
@@ -151,7 +153,7 @@ export class SimpleExecutionPromptFormatter implements ExecutionPromptFormatter 
 }
 
 export interface PlanPromptFormatter {
-    formatPrompt(sitreps: Sitrep[], intel: string): Promise<{ system: string; user: string; prompt: any }>;
+    formatPrompt(sitreps: Sitrep[], intel: StructuredIntelResult): Promise<{ system: string; user: string; prompt: any }>;
 }
 
 export class SimplePlanPromptFormatter implements PlanPromptFormatter {
@@ -162,13 +164,14 @@ export class SimplePlanPromptFormatter implements PlanPromptFormatter {
         this.sitrepFormatter = sitrepFormatter;
     }
 
-    public async formatPrompt(sitreps: Sitrep[], intel: string): Promise<{ system: string; user: string; prompt: any }> {
+    public async formatPrompt(sitreps: Sitrep[], intel: StructuredIntelResult): Promise<{ system: string; user: string; prompt: any }> {
         const prompt = await this.langfuse.prompt.get("plan_prompt", { label: "production", type: "chat" });
         const sitrepStr = sitreps.map(s => this.sitrepFormatter.format(s)).join("\n");
 
         const variables: Record<string, string> = {
             "SITREP_BLOCK": sitrepStr,
-            "INTEL_BLOCK": intel,
+            "INTEL_BLOCK": intel.report,
+            "INTEL_MARKS_JSON": intel.marksJson,
         };
 
         const compiled = prompt.compile(variables) as { role: string; content: string }[];

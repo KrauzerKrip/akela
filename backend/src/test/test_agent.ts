@@ -12,6 +12,7 @@ import { PlanVisualization, PlanVisualizer } from "../plan/visualization";
 import { PlanSandbox } from "../plan/sandbox";
 import { Army } from "../army";
 import { Session } from "../session";
+import { createEmptyIntelMapOverlay, createStructuredIntelResult } from "../intel/models";
 import { v4 as uuidv4 } from 'uuid';
 
 
@@ -178,10 +179,12 @@ async function main() {
 
             fs.writeFileSync(outputFile, JSON.stringify({ result }, null, 2));
             console.log("Finished. Output saved to", outputFile);
-            console.log("Result:\n" + result);
+            console.log("Result:\n" + JSON.stringify(result, null, 2));
         } else if (agentType === "plan") {
             // Plan agent expects Intel result
-            const intelResult = inputData.result || "";
+            const intelResult = typeof inputData.result === "string"
+                ? createStructuredIntelResult(inputData.result, createEmptyIntelMapOverlay())
+                : (inputData.result ?? createStructuredIntelResult("", createEmptyIntelMapOverlay()));
 
             const armyCombatMonitor = ArmyCombatMonitor.fromArmy(army);
             const sitreps = army.getGroups().map(g => {

@@ -36,6 +36,7 @@ import { PlanVisualizer } from "./plan/visualization";
 import { Session } from "./session";
 import { createSitrep, Sitrep } from "./sitrep";
 import type { SessionInitializePayload } from "./session_initializer";
+import { StructuredIntelResult, createEmptyIntelMapOverlay, createStructuredIntelResult } from "./intel/models";
 
 export interface PipelineDeps {
     session: Session;
@@ -57,7 +58,7 @@ interface PlanStageContext {
     planSandbox: PlanSandbox;
     gameMapArea: GameMapArea;
     sitreps: Sitrep[];
-    intelResult: string;
+    intelResult: StructuredIntelResult;
 }
 
 interface ExecutionStageContext {
@@ -296,7 +297,7 @@ export abstract class Pipeline {
         );
     }
 
-    protected abstract produceIntelReport(ctx: IntelStageContext): Promise<string>;
+    protected abstract produceIntelReport(ctx: IntelStageContext): Promise<StructuredIntelResult>;
 
     protected async producePlanningResult(ctx: PlanStageContext): Promise<PlanningResult> {
         const planAgent = new PlanAgent(
@@ -464,7 +465,7 @@ export abstract class Pipeline {
 }
 
 export class FullPipeline extends Pipeline {
-    protected async produceIntelReport({ sessionService, gameMapArea }: IntelStageContext): Promise<string> {
+    protected async produceIntelReport({ sessionService, gameMapArea }: IntelStageContext): Promise<StructuredIntelResult> {
         const intel: Intel = {
             images: (this.payload.intel.photos ?? [])
                 .filter((photoPath) => typeof photoPath === "string" && fs.existsSync(photoPath))
@@ -484,7 +485,7 @@ export class PremadeIntelPipeline extends Pipeline {
         this.premadeIntelReport = premadeIntelReport;
     }
 
-    protected async produceIntelReport(): Promise<string> {
-        return this.premadeIntelReport;
+    protected async produceIntelReport(): Promise<StructuredIntelResult> {
+        return createStructuredIntelResult(this.premadeIntelReport, createEmptyIntelMapOverlay());
     }
 }
