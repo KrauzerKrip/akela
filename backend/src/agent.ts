@@ -15,6 +15,8 @@ import { Army, TacticalReportEvent } from './army';
 import { Plan } from './plan/models';
 import { ArmyCombatMonitor } from './combat';
 import { Session } from './session';
+import { createStructuredIntelResult, structuredIntelJsonSchema, StructuredIntelResult } from './intel/models';
+import { IntelVisualizer } from './intel/visualization';
 import * as util from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import { runtimeState, InterventionCommand } from './runtime_state';
@@ -56,7 +58,62 @@ export class IntelAgent {
         this.model = "gemini-3-flash-preview";
     }
 
-    public async analyze(intel: Intel, gameMapArea: GameMapArea): Promise<string> {
+    private parseStructuredIntelResponse(responseText: string): StructuredIntelResult {
+        const extractJsonCandidate = (text: string): string => {
+            const fencedJsonMatch = text.match(/```json\s*([\s\S]*?)```/i);
+            if (fencedJsonMatch?.[1]) {
+                return fencedJsonMatch[1].trim();
+            }
+            const firstBrace = text.indexOf("{");
+            const lastBrace = text.lastIndexOf("}");
+            if (firstBrace >= 0 && lastBrace > firstBrace) {
+                return text.slice(firstBrace, lastBrace + 1).trim();
+            }
+            return text.trim();
+        };
+
+        const jsonCandidate = extractJsonCandidate(responseText);
+        try {
+            const parsed = JSON.parse(jsonCandidate);
+            const normalized = structuredIntelJsonSchema.parse(parsed);
+            return createStructuredIntelResult(normalized.report, normalized.marks);
+        } catch (error) {
+            const llmSnippet = responseText.length > 1500
+                ? `${responseText.slice(0, 1500)}...<truncated>`
+                : responseText;
+            const jsonSnippet = jsonCandidate.length > 1500
+                ? `${jsonCandidate.slice(0, 1500)}...<truncated>`
+                : jsonCandidate;
+
+            const details = error instanceof z.ZodError
+                ? JSON.stringify(error.issues, null, 2)
+                : error instanceof Error
+                    ? error.message
+                    : String(error);
+
+            eventHub.publish(withEnvelope({
+                source: "SYSTEM",
+                type: "INTEL_VALIDATION_FAILED",
+                sessionId: this.session.getId(),
+                message: "IntelAgent produced invalid structured intel JSON. Planning was aborted.",
+                validationDetails: details,
+                extractedJsonCandidate: jsonSnippet,
+                rawModelResponseSnippet: llmSnippet,
+            } as any) as any);
+
+            throw new Error(
+                [
+                    "IntelAgent produced invalid structured intel JSON.",
+                    "Pipeline is intentionally aborted so intel format can be fixed before planning.",
+                    `Validation details: ${details}`,
+                    `Extracted JSON candidate: ${jsonSnippet}`,
+                    `Raw model response snippet: ${llmSnippet}`,
+                ].join("\n"),
+            );
+        }
+    }
+
+    public async analyze(intel: Intel, gameMapArea: GameMapArea): Promise<StructuredIntelResult> {
         return startActiveObservation("IntelAgent", async (span) => {
             const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(intel.observations);
 
@@ -162,10 +219,14 @@ export class IntelAgent {
                 });
                 generation.end();
 
+                const structuredIntelResult = this.parseStructuredIntelResponse(finalResponseText);
                 span.update({
-                    output: { response: finalResponseText }
+                    output: {
+                        report: structuredIntelResult.report,
+                        marks: structuredIntelResult.marks,
+                    }
                 });
-                return finalResponseText;
+                return structuredIntelResult;
             });
         });
     }
@@ -191,7 +252,7 @@ export class PlanAgent {
         this.planSandbox = planSandbox;
     }
 
-    public async plan(army: Army, sitreps: Sitrep[], intelResult: string, gameMapArea: GameMapArea): Promise<PlanningResult> {
+    public async plan(army: Army, sitreps: Sitrep[], intelResult: StructuredIntelResult, gameMapArea: GameMapArea): Promise<PlanningResult> {
         return startActiveObservation("PlanAgent", async (span) => {
             span.update({ input: { sitreps, intelResult } });
 
@@ -354,31 +415,58 @@ export class PlanAgent {
                 });
 
                 const parts: any[] = [{ text: userPrompt }];
+                const primitiveMapBase64 = gameMapArea.getBase64Image('primitives');
+                const satelliteMapBase64 = gameMapArea.getBase64Image('satellite');
                 parts.push({
                     inlineData: {
                         mimeType: 'image/png',
-                        data: gameMapArea.getBase64Image('primitives')
+                        data: primitiveMapBase64
                     }
                 });
                 parts.push({
                     inlineData: {
                         mimeType: 'image/png',
-                        data: gameMapArea.getBase64Image('satellite')
+                        data: satelliteMapBase64
                     }
                 });
+
+                if (intelResult.marks.units.length > 0 || intelResult.marks.areas.length > 0) {
+                    try {
+                        const intelVisualizer = new IntelVisualizer(this.session);
+                        const visualization = await intelVisualizer.visualize(gameMapArea, intelResult.marks, ["primitives"]);
+                        const primitivesOverlayPath = visualization.getImagePath("primitives");
+                        intelResult.visualization = { primitivesPath: primitivesOverlayPath };
+                        parts.push({ text: "[Intel Overlay] Primitive map with threat/POI marks:" });
+                        parts.push({
+                            inlineData: {
+                                mimeType: "image/png",
+                                data: fs.readFileSync(primitivesOverlayPath).toString("base64"),
+                            }
+                        });
+                    } catch (error) {
+                        console.warn("Failed to render intel overlay for plan input. Continuing without overlay.", error);
+                    }
+                }
 
                 const wrappedImages = [
                     new LangfuseMedia({
                         source: "bytes",
-                        contentBytes: Buffer.from(gameMapArea.getBase64Image('primitives'), 'base64'),
+                        contentBytes: Buffer.from(primitiveMapBase64, 'base64'),
                         contentType: "image/png"
                     }),
                     new LangfuseMedia({
                         source: "bytes",
-                        contentBytes: Buffer.from(gameMapArea.getBase64Image('satellite'), 'base64'),
+                        contentBytes: Buffer.from(satelliteMapBase64, 'base64'),
                         contentType: "image/png"
                     })
                 ];
+                if (intelResult.visualization?.primitivesPath) {
+                    wrappedImages.push(new LangfuseMedia({
+                        source: "bytes",
+                        contentBytes: fs.readFileSync(intelResult.visualization.primitivesPath),
+                        contentType: "image/png"
+                    }));
+                }
 
                 let finalResponseText = "Agent did not produce a final response.";
 

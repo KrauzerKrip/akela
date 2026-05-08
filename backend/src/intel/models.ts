@@ -1,4 +1,5 @@
 import type { Point } from "../geography";
+import { z } from "zod";
 
 /**
  * Basenames of SVG files under backend/resources/icons/ (without .svg).
@@ -58,4 +59,58 @@ export interface IntelAreaHighlight {
 export interface IntelMapOverlay {
     units: IntelUnit[];
     areas: IntelAreaHighlight[];
+}
+
+export interface StructuredIntelResultVisualization {
+    primitivesPath?: string;
+}
+
+export interface StructuredIntelResult {
+    report: string;
+    marks: IntelMapOverlay;
+    marksJson: string;
+    visualization?: StructuredIntelResultVisualization;
+}
+
+const pointSchema = z.object({
+    x: z.number(),
+    y: z.number(),
+});
+
+const intelUnitSchema = z.object({
+    id: z.string().optional(),
+    type: z.enum(INTEL_UNIT_TYPES),
+    position: pointSchema,
+    label: z.string().optional(),
+});
+
+const intelAreaHighlightSchema = z.object({
+    vertices: z.array(pointSchema).min(3),
+    label: z.string().optional(),
+});
+
+export const intelMapOverlaySchema = z.object({
+    units: z.array(intelUnitSchema),
+    areas: z.array(intelAreaHighlightSchema),
+});
+
+export const structuredIntelJsonSchema = z.object({
+    report: z.string().default(""),
+    marks: intelMapOverlaySchema.default({ units: [], areas: [] }),
+});
+
+export function createEmptyIntelMapOverlay(): IntelMapOverlay {
+    return {
+        units: [],
+        areas: [],
+    };
+}
+
+export function createStructuredIntelResult(report: string, marks: IntelMapOverlay): StructuredIntelResult {
+    const safeMarks = intelMapOverlaySchema.parse(marks);
+    return {
+        report: report.trim(),
+        marks: safeMarks,
+        marksJson: JSON.stringify(safeMarks, null, 2),
+    };
 }

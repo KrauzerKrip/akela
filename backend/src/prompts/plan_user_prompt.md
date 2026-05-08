@@ -1,6 +1,9 @@
 # INTELLIGENCE REPORT
 {{INTEL_BLOCK}}
 
+# INTEL MARKS JSON (threats and POIs)
+{{INTEL_MARKS_JSON}}
+
 # SITREP (your side)
 {{SITREP_BLOCK}}
 

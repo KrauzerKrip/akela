@@ -47,15 +47,23 @@ export class IntelVisualizer {
         this.session = session;
     }
 
-    public async visualize(gameMapArea: GameMapArea, overlay: IntelMapOverlay): Promise<IntelVisualization> {
+    public async visualize(
+        gameMapArea: GameMapArea,
+        overlay: IntelMapOverlay,
+        layers: VisualizedIntelLayerType[] = ["primitives", "satellite"],
+    ): Promise<IntelVisualization> {
         ensureIntelMapFontsRegistered();
-        const exportDir = await this.makeOverlay(gameMapArea, overlay);
+        const exportDir = await this.makeOverlay(gameMapArea, overlay, layers);
         const id = path.basename(exportDir);
         console.log(`Visualized intel overlay and exported to ${exportDir}`);
         return new IntelVisualization(id, exportDir);
     }
 
-    private async makeOverlay(gameMapArea: GameMapArea, overlay: IntelMapOverlay): Promise<string> {
+    private async makeOverlay(
+        gameMapArea: GameMapArea,
+        overlay: IntelMapOverlay,
+        layers: VisualizedIntelLayerType[],
+    ): Promise<string> {
         const id = uuidv4();
         const exportDir = path.join(this.session.getIntelDirectory(), id);
         const outline = new IntelOutline(gameMapArea);
@@ -91,7 +99,7 @@ export class IntelVisualizer {
             outline.drawUnitIcon(img, unit.position, unit.label);
         }
 
-        await outline.export(exportDir);
+        await outline.export(exportDir, layers);
         return exportDir;
     }
 }
@@ -187,35 +195,15 @@ class IntelOutline {
         }
     }
 
-    public async export(exportDir: string) {
+    public async export(exportDir: string, layers: VisualizedIntelLayerType[] = ["primitives", "satellite"]) {
         if (!fs.existsSync(exportDir)) {
             fs.mkdirSync(exportDir, { recursive: true });
         }
-
-        const primitivesLayerPath = this.gameMapArea.getPath("primitives");
-        const satelliteLayerPath = this.gameMapArea.getPath("satellite");
-
-        const primImage = await loadImage(primitivesLayerPath);
-        const satImage = await loadImage(satelliteLayerPath);
 
         const res = this.gameMapArea.getImageResolution();
 
         const outlineBuffer = this.canvas.toBuffer("image/png");
         const outlineImage = await loadImage(outlineBuffer);
-
-        const primCanvas = createCanvas(res.width, res.height);
-        const primCtx = primCanvas.getContext("2d");
-        primCtx.drawImage(primImage, 0, 0);
-        primCtx.drawImage(outlineImage, 0, 0);
-        const primPath = path.join(exportDir, "primitives_outline.png");
-        fs.writeFileSync(primPath, primCanvas.toBuffer("image/png"));
-
-        const satCanvas = createCanvas(res.width, res.height);
-        const satCtx = satCanvas.getContext("2d");
-        satCtx.drawImage(satImage, 0, 0);
-        satCtx.drawImage(outlineImage, 0, 0);
-        const satPath = path.join(exportDir, "satellite_outline.png");
-        fs.writeFileSync(satPath, satCanvas.toBuffer("image/png"));
 
         const pythonExecutable = process.env.PYTHON_EXEC;
         if (!pythonExecutable) {
@@ -232,7 +220,29 @@ class IntelOutline {
         };
 
         try {
-            await Promise.all([execAsync(buildCmd(primPath)), execAsync(buildCmd(satPath))]);
+            if (layers.includes("primitives")) {
+                const primitivesLayerPath = this.gameMapArea.getPath("primitives");
+                const primImage = await loadImage(primitivesLayerPath);
+                const primCanvas = createCanvas(res.width, res.height);
+                const primCtx = primCanvas.getContext("2d");
+                primCtx.drawImage(primImage, 0, 0);
+                primCtx.drawImage(outlineImage, 0, 0);
+                const primPath = path.join(exportDir, "primitives_outline.png");
+                fs.writeFileSync(primPath, primCanvas.toBuffer("image/png"));
+                await execAsync(buildCmd(primPath));
+            }
+
+            if (layers.includes("satellite")) {
+                const satelliteLayerPath = this.gameMapArea.getPath("satellite");
+                const satImage = await loadImage(satelliteLayerPath);
+                const satCanvas = createCanvas(res.width, res.height);
+                const satCtx = satCanvas.getContext("2d");
+                satCtx.drawImage(satImage, 0, 0);
+                satCtx.drawImage(outlineImage, 0, 0);
+                const satPath = path.join(exportDir, "satellite_outline.png");
+                fs.writeFileSync(satPath, satCanvas.toBuffer("image/png"));
+                await execAsync(buildCmd(satPath));
+            }
         } catch (error) {
             console.error("Error adding frame to intel map visualization:", error);
             throw error;

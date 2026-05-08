@@ -107,7 +107,25 @@ export interface SessionManifest {
       y2?: number;
     };
   };
-  intelResult?: string;
+  intelResult?: string | {
+    report?: string;
+    marks?: {
+      units?: Array<{
+        id?: string;
+        type?: string;
+        position?: { x?: number; y?: number };
+        label?: string;
+      }>;
+      areas?: Array<{
+        vertices?: Array<{ x?: number; y?: number }>;
+        label?: string;
+      }>;
+    };
+    marksJson?: string;
+    visualization?: {
+      primitivesPath?: string;
+    };
+  };
   planningResult?: {
     description?: string;
     code?: string;
