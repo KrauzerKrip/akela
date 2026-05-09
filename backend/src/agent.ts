@@ -289,6 +289,18 @@ export class IntelAgent {
                         photoIndex++;
                     }
 
+                    const wrappedExtractBatchImages = batch.map((img) => {
+                        const ct =
+                            mimeTypeForImagePath(img.getPath()) === "image/png"
+                                ? ("image/png" as const)
+                                : ("image/jpeg" as const);
+                        return new LangfuseMedia({
+                            source: "bytes",
+                            contentBytes: Buffer.from(img.getBase64(), "base64"),
+                            contentType: ct,
+                        });
+                    });
+
                     const { text } = await this.runIntelLlmTurn({
                         agentName: `intel_extract_${bi}`,
                         agentDescription: "UAV batch extraction for IntelAgent.",
@@ -299,6 +311,10 @@ export class IntelAgent {
                             observations: intel.observations,
                             batchIndex: bi,
                             batchSize: batch.length,
+                            photoLabels: batch.map((img, j) =>
+                                photoLabel(photoFirst + j, img.getPath()),
+                            ),
+                            images: wrappedExtractBatchImages,
                         },
                     });
 
