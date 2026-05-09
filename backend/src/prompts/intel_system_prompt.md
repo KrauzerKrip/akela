@@ -38,6 +38,7 @@ Rules:
 - **Positions & Grid Analysis**: Where are the entities located considering the provided maps, primitives, and grids? Be as precise as possible, referencing coordinate quadrants or relationships.
 - **Terrain Context**: What is the terrain like around the entities? Mention features like forests, buildings, elevations, roads, and lines of sight.
 - **Tactical Utility Assessment**: Identify critical threats (e.g., "AA emplacement covering the North") and terrain opportunities (e.g., "Depression at grid 042 allows for defilade").
+- When the user message includes merged UAV findings with **Evidence appendix** instructions, end `report` with a concise appendix mapping emitted marks (by id/label) back to the cited photo labels — without changing the JSON shape beyond `report` text.
 - `marks.units[*].type` must be one of the known intel unit types used by the map symbol set.
 - Allowed `marks.units[*].type` values (must match exactly): {{INTEL_MARK_UNIT_TYPES}}
 - `marks.areas[*].vertices` must contain at least 3 points each.

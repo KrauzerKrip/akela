@@ -16,6 +16,21 @@ async function main() {
             user: "intel_user_prompt"
         },
         {
+            name: "intel_extract_prompt",
+            sys: "intel_extraction_system_prompt",
+            user: "intel_extraction_user_prompt"
+        },
+        {
+            name: "intel_merge_prompt",
+            sys: "intel_merge_system_prompt",
+            user: "intel_merge_user_prompt"
+        },
+        {
+            name: "intel_finalize_supplement_prompt",
+            sys: "intel_finalize_supplement_system_prompt",
+            user: "intel_finalize_supplement_user_prompt"
+        },
+        {
             name: "plan_prompt",
             sys: "plan_system_prompt",
             user: "plan_user_prompt"
