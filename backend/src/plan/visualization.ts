@@ -164,16 +164,31 @@ class Outline {
     }
 
     /**
-     * Converts Arma 3 coordinates to Image pixel coordinates
+     * Converts Arma world XY to overlay pixels (aligned with python/area.py imshow extent).
      */
     private toImageCoords(point: Point): { x: number, y: number } {
         const { width, height } = this.gameMapArea.getImageResolution();
-        const rx = (point.x - this.gameMapArea.leftBottomCorner.x) / (this.gameMapArea.rightTopCorner.x - this.gameMapArea.leftBottomCorner.x);
-        // Arma 3 Y increases northwards, image Y increases downwards
-        const ry = (this.gameMapArea.rightTopCorner.y - point.y) / (this.gameMapArea.rightTopCorner.y - this.gameMapArea.leftBottomCorner.y);
+        const worldMinX = Math.min(
+            this.gameMapArea.leftBottomCorner.x,
+            this.gameMapArea.rightTopCorner.x,
+        );
+        const worldMaxX = Math.max(
+            this.gameMapArea.leftBottomCorner.x,
+            this.gameMapArea.rightTopCorner.x,
+        );
+        const worldMinY = Math.min(
+            this.gameMapArea.leftBottomCorner.y,
+            this.gameMapArea.rightTopCorner.y,
+        );
+        const worldMaxY = Math.max(
+            this.gameMapArea.leftBottomCorner.y,
+            this.gameMapArea.rightTopCorner.y,
+        );
+        const rx = (point.x - worldMinX) / (worldMaxX - worldMinX);
+        const ry = (worldMaxY - point.y) / (worldMaxY - worldMinY);
         return {
             x: rx * width,
-            y: ry * height
+            y: ry * height,
         };
     }
 
