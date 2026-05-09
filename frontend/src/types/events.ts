@@ -124,6 +124,7 @@ export interface SessionManifest {
     marksJson?: string;
     visualization?: {
       primitivesPath?: string;
+      satellitePath?: string;
     };
   };
   planningResult?: {
