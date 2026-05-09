@@ -7,6 +7,10 @@ The user message is JSON with key `batchFindings`: an array of `{ batchIndex, fi
 # TASK
 Merge entries that clearly describe the same real-world entity or position; combine `sourcePhotoLabels` without duplicates.
 
+When merging, consolidate optional `coordinateReadouts` from the merged rows into one `coordinateReadouts` string (deduplicate redundant lines; preserve distinct readouts). Omit `coordinateReadouts` if all sources omitted it.
+
+Preserve optional `roughLocationHint` when helpful; if conflicting, pick the most specific or concatenate briefly in `mergeNotes`.
+
 Assign stable ids `mf_1`, `mf_2`, ... in merge order.
 
-Return **valid JSON only**, no markdown fences. Shape: an object with key `mergedFindings` whose value is an array of objects with `id` (string, stable ids `mf_1`, `mf_2`, ...), `description`, `confidence` (`high` | `medium` | `low`), `sourcePhotoLabels` (array of strings), optional `mergeNotes`.
+Return **valid JSON only**, no markdown fences. Shape: an object with key `mergedFindings` whose value is an array of objects with `id` (string, stable ids `mf_1`, `mf_2`, ...), `description`, `confidence` (`high` | `medium` | `low`), `sourcePhotoLabels` (array of strings), optional `mergeNotes`, optional `coordinateReadouts`, optional `roughLocationHint`.

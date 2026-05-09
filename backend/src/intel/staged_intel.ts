@@ -44,7 +44,14 @@ const extractionFindingSchema = z.object({
     category: z.string().optional(),
     confidence: confidenceSchema,
     sourcePhotoLabels: z.array(z.string().min(1)).min(1),
+    /** Qualitative placement within the frame / terrain cues when coords are absent or unclear. */
     roughLocationHint: z.string().optional(),
+    /**
+     * Transcribe any legible coordinate/grid/HUD readouts from the imagery (e.g. GRID lines, numeric X/Y,
+     * six-digit map hints). Note if labels indicate UAV vs cursor/target when discernible.
+     * Omit if nothing readable — do not invent numbers.
+     */
+    coordinateReadouts: z.string().optional(),
 });
 
 export const extractionBatchSchema = z.object({
@@ -59,6 +66,9 @@ const mergedFindingSchema = z.object({
     confidence: confidenceSchema,
     sourcePhotoLabels: z.array(z.string().min(1)).min(1),
     mergeNotes: z.string().optional(),
+    roughLocationHint: z.string().optional(),
+    /** Combined transcription from merged source findings; omit if none. */
+    coordinateReadouts: z.string().optional(),
 });
 
 export const mergePassSchema = z.object({
