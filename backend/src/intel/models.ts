@@ -63,6 +63,7 @@ export interface IntelMapOverlay {
 
 export interface StructuredIntelResultVisualization {
     primitivesPath?: string;
+    satellitePath?: string;
 }
 
 export interface StructuredIntelResult {
