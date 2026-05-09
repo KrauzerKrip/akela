@@ -115,7 +115,7 @@ export class IntelAgent {
 
     public async analyze(intel: Intel, gameMapArea: GameMapArea): Promise<StructuredIntelResult> {
         return startActiveObservation("IntelAgent", async (span) => {
-            const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(intel.observations);
+            const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(intel.observations, gameMapArea);
 
             span.update({
                 input: { observations: intel.observations }

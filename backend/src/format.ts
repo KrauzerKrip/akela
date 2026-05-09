@@ -1,5 +1,5 @@
 import { Sitrep, GroupSitrepStatus } from "./sitrep";
-import { Point } from "./geography";
+import { GameMapArea, Point } from "./geography";
 import { LangfuseClient } from "@langfuse/client";
 import { INTEL_UNIT_TYPES, StructuredIntelResult } from "./intel/models";
 
@@ -71,18 +71,30 @@ export class YamlSitrepFormatter implements SitrepFormatter {
     }
 }
 export interface IntelPromptFormatter {
-    formatPrompt(observations: string[]): Promise<{ system: string; user: string; prompt: any }>;
+    formatPrompt(observations: string[], gameMapArea?: GameMapArea): Promise<{ system: string; user: string; prompt: any }>;
+}
+
+/** Value for `MAP_EXTENT_BLOCK` in `intel_user_prompt.md` (world meters). */
+export function formatIntelMapExtentBlock(area: GameMapArea): string {
+    const lb = area.leftBottomCorner;
+    const rt = area.rightTopCorner;
+    const minX = Math.min(lb.x, rt.x);
+    const maxX = Math.max(lb.x, rt.x);
+    const minY = Math.min(lb.y, rt.y);
+    const maxY = Math.max(lb.y, rt.y);
+    return `X from ${minX} to ${maxX}, Y from ${minY} to ${maxY}.`;
 }
 
 export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
     private langfuse = new LangfuseClient();
 
-    public async formatPrompt(observations: string[]): Promise<{ system: string; user: string; prompt: any }> {
+    public async formatPrompt(observations: string[], gameMapArea?: GameMapArea): Promise<{ system: string; user: string; prompt: any }> {
         const prompt = await this.langfuse.prompt.get("intel_prompt", { label: "production", type: "chat" });
         const observationString = observations.join("\n");
         const variables: Record<string, string> = {
             "OBSERVATION_BLOCK": observationString,
             "INTEL_MARK_UNIT_TYPES": INTEL_UNIT_TYPES.join(", "),
+            "MAP_EXTENT_BLOCK": gameMapArea ? formatIntelMapExtentBlock(gameMapArea) : "Not available for this run.",
         };
         const compiled = prompt.compile(variables) as { role: string; content: string }[];
         const system = compiled.find(m => m.role === "system")?.content || "";

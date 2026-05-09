@@ -41,7 +41,15 @@ Rules:
 - `marks.units[*].type` must be one of the known intel unit types used by the map symbol set.
 - Allowed `marks.units[*].type` values (must match exactly): {{INTEL_MARK_UNIT_TYPES}}
 - `marks.areas[*].vertices` must contain at least 3 points each.
-- Use Arma world coordinates (`x`, `y`) for all marks.
+- Use **full Arma world coordinates in meters** (`x`, `y`) for every vertex and unit position — the same horizontal convention as Arma world space / planning maps (often thousands of meters on terrains like Altis).
+
+### Coordinate scale (read carefully — common failure mode)
+On the **framed** satellite/primitives images, axis tick labels are **not** raw meters. They show **`floor(world_meters / 100)`** as a **three-digit** index (e.g. tick `130` sits at **13000** m on that axis, `036` at **3600** m). To place a feature: read the nearest ticks, convert **label × 100** to meters at each grid line, then **linearly interpolate** using the feature's pixel position **between** those lines. Never copy tick digits into JSON as if they were already meters (that shrinks northing/easting by ~100× and destroys overlay placement).
+
+Sanity check: if your computed `y` is only in the **hundreds or low thousands** (e.g. 1200–1400) while the provided map extent spans **tens of thousands** on Y (see user message), you mis-scaled — re-derive from ticks ×100 and interpolation.
+
+Verbal six-digit grid-style hints in observations (e.g. `038130`) refer to **100 m** map indexing, not decimal fractions; expand them consistently with the meter scale above before emitting `marks`.
+
 - Include only confident marks. If uncertain, leave arrays empty instead of guessing.
 
 Your output will be directly handed to the Planning Agent. Ensure it is coherent, detailed, and unambiguous. 
