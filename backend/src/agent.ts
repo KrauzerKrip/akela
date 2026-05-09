@@ -55,7 +55,7 @@ export class IntelAgent {
         this.formatter = formatter;
         this.sessionService = sessionService;
         this.session = session;
-        this.model = "gemini-3-flash-preview";
+        this.model = "gemini-3-flash-preview"; //"gemini-3.1-pro-preview";
     }
 
     private parseStructuredIntelResponse(responseText: string): StructuredIntelResult {
@@ -148,12 +148,28 @@ export class IntelAgent {
                         }
                     });
                 }
+
+                const frameSatelliteB64 = gameMapArea.getBase64Image('frame_satellite');
+                const satelliteB64 = gameMapArea.getBase64Image('satellite');
+
+                parts.push({
+                    text: "[Map] Gridded satellite reference frame (use axis ticks per system instructions for coordinate interpolation):",
+                });
                 parts.push({
                     inlineData: {
-                        mimeType: 'image/jpeg',
-                        data: gameMapArea.getBase64Image('frame_satellite')
+                        mimeType: 'image/png',
+                        data: frameSatelliteB64
                     }
                 });
+                // parts.push({
+                //     text: "[Map] Bare satellite imagery for terrain and feature identification (same extent as the gridded frame above):",
+                // });
+                // parts.push({
+                //     inlineData: {
+                //         mimeType: 'image/png',
+                //         data: satelliteB64
+                //     }
+                // });
 
                 const wrappedImages = intel.images.map(img => new LangfuseMedia({
                     source: "bytes",
@@ -162,9 +178,14 @@ export class IntelAgent {
                 }));
                 wrappedImages.push(new LangfuseMedia({
                     source: "bytes",
-                    contentBytes: Buffer.from(gameMapArea.getBase64Image('frame_satellite'), 'base64'),
-                    contentType: "image/jpeg"
+                    contentBytes: Buffer.from(frameSatelliteB64, 'base64'),
+                    contentType: "image/png"
                 }));
+                // wrappedImages.push(new LangfuseMedia({
+                //     source: "bytes",
+                //     contentBytes: Buffer.from(satelliteB64, 'base64'),
+                //     contentType: "image/png"
+                // }));
 
                 let finalResponseText = "Agent did not produce a final response.";
 
