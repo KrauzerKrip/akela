@@ -70,8 +70,26 @@ export class YamlSitrepFormatter implements SitrepFormatter {
         return lines.join('\n');
     }
 }
+/** Variables for `intel_extract_prompt` (Langfuse). */
+export interface IntelExtractBatchPromptVars {
+    batchIndexOneBased: number;
+    batchTotal: number;
+    photoIndexFirst: number;
+    photoIndexLast: number;
+    observations: string[];
+}
+
 export interface IntelPromptFormatter {
     formatPrompt(observations: string[], gameMapArea?: GameMapArea): Promise<{ system: string; user: string; prompt: any }>;
+
+    /** Staged Intel: vision-only extraction for one UAV batch (prompt `intel_extract_prompt`). */
+    formatIntelExtractPrompt(vars: IntelExtractBatchPromptVars): Promise<{ system: string; user: string; prompt: any }>;
+
+    /** Staged Intel: merge batch findings JSON (prompt `intel_merge_prompt`). */
+    formatIntelMergePrompt(mergePayloadJson: string): Promise<{ system: string; user: string; prompt: any }>;
+
+    /** Staged Intel: supplement appended before map image on finalize (prompt `intel_finalize_supplement_prompt`). Returns user text only. */
+    formatIntelFinalizeSupplement(mergedFindingsJson: string, mapExtentLine: string): Promise<{ supplementUserText: string; prompt: any }>;
 }
 
 /** Value for `MAP_EXTENT_BLOCK` in `intel_user_prompt.md` (world meters). */
@@ -88,6 +106,16 @@ export function formatIntelMapExtentBlock(area: GameMapArea): string {
 export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
     private langfuse = new LangfuseClient();
 
+    private compileChatRoles(prompt: { compile: (v: Record<string, string>) => unknown }, variables: Record<string, string>): {
+        system: string;
+        user: string;
+    } {
+        const compiled = prompt.compile(variables) as { role: string; content: string }[];
+        const system = compiled.find((m) => m.role === "system")?.content || "";
+        const user = compiled.find((m) => m.role === "user")?.content || "";
+        return { system, user };
+    }
+
     public async formatPrompt(observations: string[], gameMapArea?: GameMapArea): Promise<{ system: string; user: string; prompt: any }> {
         const prompt = await this.langfuse.prompt.get("intel_prompt", { label: "production", type: "chat" });
         const observationString = observations.join("\n");
@@ -96,10 +124,48 @@ export class SimpleIntelPromptFormatter implements IntelPromptFormatter {
             "INTEL_MARK_UNIT_TYPES": INTEL_UNIT_TYPES.join(", "),
             "MAP_EXTENT_BLOCK": gameMapArea ? formatIntelMapExtentBlock(gameMapArea) : "Not available for this run.",
         };
-        const compiled = prompt.compile(variables) as { role: string; content: string }[];
-        const system = compiled.find(m => m.role === "system")?.content || "";
-        const user = compiled.find(m => m.role === "user")?.content || "";
+        const { system, user } = this.compileChatRoles(prompt, variables);
         return { system, user, prompt };
+    }
+
+    public async formatIntelExtractPrompt(vars: IntelExtractBatchPromptVars): Promise<{ system: string; user: string; prompt: any }> {
+        const prompt = await this.langfuse.prompt.get("intel_extract_prompt", { label: "production", type: "chat" });
+        const observationBlock =
+            vars.observations.length > 0 ? vars.observations.join("\n") : "(none)";
+        const variables: Record<string, string> = {
+            INTEL_BATCH_INDEX_ONE_BASED: String(vars.batchIndexOneBased),
+            INTEL_BATCH_TOTAL: String(vars.batchTotal),
+            INTEL_PHOTO_INDEX_FIRST: String(vars.photoIndexFirst),
+            INTEL_PHOTO_INDEX_LAST: String(vars.photoIndexLast),
+            OBSERVATION_BLOCK: observationBlock,
+        };
+        const { system, user } = this.compileChatRoles(prompt, variables);
+        return { system, user, prompt };
+    }
+
+    public async formatIntelMergePrompt(mergePayloadJson: string): Promise<{ system: string; user: string; prompt: any }> {
+        const prompt = await this.langfuse.prompt.get("intel_merge_prompt", { label: "production", type: "chat" });
+        const variables: Record<string, string> = {
+            MERGE_PAYLOAD_JSON: mergePayloadJson,
+        };
+        const { system, user } = this.compileChatRoles(prompt, variables);
+        return { system, user, prompt };
+    }
+
+    public async formatIntelFinalizeSupplement(
+        mergedFindingsJson: string,
+        mapExtentLine: string,
+    ): Promise<{ supplementUserText: string; prompt: any }> {
+        const prompt = await this.langfuse.prompt.get("intel_finalize_supplement_prompt", {
+            label: "production",
+            type: "chat",
+        });
+        const variables: Record<string, string> = {
+            MERGED_FINDINGS_JSON: mergedFindingsJson,
+            MAP_EXTENT_LINE: mapExtentLine,
+        };
+        const { user } = this.compileChatRoles(prompt, variables);
+        return { supplementUserText: user, prompt };
     }
 }
 

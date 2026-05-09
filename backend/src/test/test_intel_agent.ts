@@ -17,7 +17,7 @@ function usage(): void {
     );
 }
 
-function loadPayload(raw: unknown, manifestPath: string): SessionInitializePayload {
+export function loadIntelTestManifest(raw: unknown, manifestPath: string): SessionInitializePayload {
     let base: unknown = raw;
     if (
         raw &&
@@ -94,7 +94,7 @@ async function main(): Promise<void> {
         process.exit(1);
     }
 
-    const payload = loadPayload(raw, manifestFile);
+    const payload = loadIntelTestManifest(raw, manifestFile);
 
     const dbUrl = process.env.SESSION_DB_URL;
     if (!dbUrl) {

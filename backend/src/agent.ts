@@ -3,10 +3,10 @@ import { BaseContextCompactor, FunctionTool, InvocationContext, LlmAgent, Contex
 import { startActiveObservation, startObservation, propagateAttributes } from '@langfuse/tracing';
 import { createUserContent } from '@google/genai';
 import { LangfuseMedia } from "@langfuse/core";
-import { int, z } from 'zod';
+import { z } from 'zod';
 import * as fs from 'fs';
 import path from 'path';
-import { ExecutionPromptFormatter, IntelPromptFormatter, PlanPromptFormatter, SitrepFormatter } from './format';
+import { ExecutionPromptFormatter, formatIntelMapExtentBlock, IntelPromptFormatter, PlanPromptFormatter, SitrepFormatter } from './format';
 import { createSitrep, Sitrep } from './sitrep';
 import { GameMapArea, Point } from './geography';
 import { PlanVisualization, PlanVisualizer } from './plan/visualization';
@@ -16,6 +16,16 @@ import { Plan } from './plan/models';
 import { ArmyCombatMonitor } from './combat';
 import { Session } from './session';
 import { createStructuredIntelResult, structuredIntelJsonSchema, StructuredIntelResult } from './intel/models';
+import {
+    buildMergeUserPayload,
+    chunkArray,
+    extractJsonObject,
+    extractionBatchSchema,
+    intelBatchSizeFromEnv,
+    mergePassSchema,
+    mimeTypeForImagePath,
+    photoLabel,
+} from './intel/staged_intel';
 import { IntelVisualizer } from './intel/visualization';
 import * as util from 'util';
 import { v4 as uuidv4 } from 'uuid';
@@ -28,6 +38,10 @@ export class Image {
 
     constructor(path: string) {
         this.path = path;
+    }
+
+    public getPath(): string {
+        return this.path;
     }
 
     public getBase64(): string {
@@ -113,143 +127,347 @@ export class IntelAgent {
         }
     }
 
+    /**
+     * Single LLM turn for IntelAgent substeps (extract / merge / finalize).
+     */
+    private async runIntelLlmTurn(params: {
+        agentName: string;
+        agentDescription: string;
+        systemInstruction: string;
+        userParts: any[];
+        langfuseGenerationName: string;
+        langfuseInput: Record<string, unknown>;
+        promptObj?: unknown;
+    }): Promise<{ text: string; promptTokens: number; candidatesTokens: number; totalTokens: number }> {
+        const {
+            agentName,
+            agentDescription,
+            systemInstruction,
+            userParts,
+            langfuseGenerationName,
+            langfuseInput,
+            promptObj,
+        } = params;
+
+        const agent = new LlmAgent({
+            name: agentName,
+            model: this.model,
+            description: agentDescription,
+            instruction: systemInstruction,
+        });
+        const runner = new Runner({
+            agent: agent,
+            sessionService: this.sessionService,
+            appName: "intel-akela",
+        });
+
+        const session = await this.sessionService.createSession({
+            appName: "intel-akela",
+            userId: process.env.SESSION_USER_ID || "akela_user",
+        });
+
+        let finalResponseText = "Agent did not produce a final response.";
+
+        const generation = startObservation(
+            langfuseGenerationName,
+            {
+                model: this.model,
+                input: langfuseInput,
+            },
+            { asType: "generation" },
+        );
+
+        let sessionPromptTokens = 0;
+        let sessionCandidatesTokens = 0;
+        let sessionTotalTokens = 0;
+
+        const eventStream = runner.runAsync({
+            sessionId: session.id,
+            userId: session.userId,
+            newMessage: {
+                role: "user",
+                parts: userParts,
+            },
+        });
+
+        for await (const event of eventStream) {
+            if (event.usageMetadata) {
+                sessionPromptTokens += event.usageMetadata.promptTokenCount || 0;
+                sessionCandidatesTokens += event.usageMetadata.candidatesTokenCount || 0;
+                sessionTotalTokens += event.usageMetadata.totalTokenCount || 0;
+            }
+            console.log(
+                "DEBUG EVENT:",
+                JSON.stringify(event, (k, v) =>
+                    k === "data" && typeof v === "string" && v.length > 200 ? "<base64 image removed>" : v,
+                    2,
+                ),
+            );
+
+            if (isFinalResponse(event)) {
+                if (event.content && event.content.parts && event.content.parts.length > 0) {
+                    finalResponseText = event.content.parts[0].text || "";
+                } else if (event.actions && (event.actions as any).escalate) {
+                    finalResponseText = `Agent escalated: ${(event as any).errorMessage || "No specific message."}`;
+                }
+                break;
+            }
+        }
+
+        generation.update({
+            ...(promptObj !== undefined ? { prompt: promptObj } : {}),
+            usageDetails: {
+                input: sessionPromptTokens,
+                output: sessionCandidatesTokens,
+                total: sessionTotalTokens,
+            },
+            output: { content: finalResponseText },
+        } as Parameters<typeof generation.update>[0]);
+        generation.end();
+
+        return {
+            text: finalResponseText,
+            promptTokens: sessionPromptTokens,
+            candidatesTokens: sessionCandidatesTokens,
+            totalTokens: sessionTotalTokens,
+        };
+    }
+
     public async analyze(intel: Intel, gameMapArea: GameMapArea): Promise<StructuredIntelResult> {
         return startActiveObservation("IntelAgent", async (span) => {
             const { system: systemPrompt, user: userPrompt, prompt: promptObj } = await this.formatter.formatPrompt(intel.observations, gameMapArea);
 
             span.update({
-                input: { observations: intel.observations }
+                input: { observations: intel.observations, imageCount: intel.images.length },
             });
 
             return await propagateAttributes({ sessionId: this.session.getId() }, async () => {
-                const agent = new LlmAgent({
-                    name: "intel_agent",
-                    model: this.model,
-                    description: "Analyzes intelligence observations and images.",
-                    instruction: systemPrompt,
-                });
-                const runner = new Runner({
-                    agent: agent,
-                    sessionService: this.sessionService,
-                    appName: "intel-akela"
-                });
+                const legacySingleshot = process.env.AKELA_INTEL_LEGACY_SINGLESHOT === "1";
+                const useStagedPipeline = intel.images.length > 0 && !legacySingleshot;
 
-                const session = await this.sessionService.createSession({
-                    appName: "intel-akela",
-                    userId: process.env.SESSION_USER_ID || "akela_user",
-                });
-
-                const parts: any[] = [{ text: userPrompt }];
-                for (const image of intel.images) {
-                    parts.push({
-                        inlineData: {
-                            mimeType: 'image/jpeg',
-                            data: image.getBase64()
-                        }
+                if (!useStagedPipeline) {
+                    return await this.runLegacyIntelSingleshot({
+                        span,
+                        intel,
+                        gameMapArea,
+                        systemPrompt,
+                        userPrompt,
+                        promptObj,
                     });
                 }
 
-                const frameSatelliteB64 = gameMapArea.getBase64Image('frame_satellite');
-                const satelliteB64 = gameMapArea.getBase64Image('satellite');
+                const batchSize = intelBatchSizeFromEnv();
+                const batches = chunkArray(intel.images, batchSize);
+                const batchPayloads: { batchIndex: number; findings: z.infer<typeof extractionBatchSchema>["findings"] }[] =
+                    [];
 
-                parts.push({
-                    text: "[Map] Gridded satellite reference frame (use axis ticks per system instructions for coordinate interpolation):",
-                });
-                parts.push({
-                    inlineData: {
-                        mimeType: 'image/png',
-                        data: frameSatelliteB64
+                let photoIndex = 1;
+                for (let bi = 0; bi < batches.length; bi++) {
+                    const batch = batches[bi]!;
+                    const photoFirst = photoIndex;
+                    const photoLast = photoIndex + batch.length - 1;
+
+                    const { system: extractSystem, user: extractUser } = await this.formatter.formatIntelExtractPrompt({
+                        batchIndexOneBased: bi + 1,
+                        batchTotal: batches.length,
+                        photoIndexFirst: photoFirst,
+                        photoIndexLast: photoLast,
+                        observations: intel.observations,
+                    });
+
+                    const parts: any[] = [{ text: extractUser }];
+
+                    for (const image of batch) {
+                        const label = photoLabel(photoIndex, image.getPath());
+                        parts.push({ text: `[${label}]` });
+                        parts.push({
+                            inlineData: {
+                                mimeType: mimeTypeForImagePath(image.getPath()),
+                                data: image.getBase64(),
+                            },
+                        });
+                        photoIndex++;
                     }
-                });
-                // parts.push({
-                //     text: "[Map] Bare satellite imagery for terrain and feature identification (same extent as the gridded frame above):",
-                // });
-                // parts.push({
-                //     inlineData: {
-                //         mimeType: 'image/png',
-                //         data: satelliteB64
-                //     }
-                // });
 
-                const wrappedImages = intel.images.map(img => new LangfuseMedia({
-                    source: "bytes",
-                    contentBytes: Buffer.from(img.getBase64(), 'base64'),
-                    contentType: "image/jpeg"
-                }));
-                wrappedImages.push(new LangfuseMedia({
-                    source: "bytes",
-                    contentBytes: Buffer.from(frameSatelliteB64, 'base64'),
-                    contentType: "image/png"
-                }));
-                // wrappedImages.push(new LangfuseMedia({
-                //     source: "bytes",
-                //     contentBytes: Buffer.from(satelliteB64, 'base64'),
-                //     contentType: "image/png"
-                // }));
+                    const { text } = await this.runIntelLlmTurn({
+                        agentName: `intel_extract_${bi}`,
+                        agentDescription: "UAV batch extraction for IntelAgent.",
+                        systemInstruction: extractSystem,
+                        userParts: parts,
+                        langfuseGenerationName: `IntelAgent-extract-batch-${bi}`,
+                        langfuseInput: {
+                            observations: intel.observations,
+                            batchIndex: bi,
+                            batchSize: batch.length,
+                        },
+                    });
 
-                let finalResponseText = "Agent did not produce a final response.";
-
-                const generation = startObservation(
-                    "IntelAgent-LLM",
-                    {
-                        model: this.model,
-                        input: { observations: intel.observations, images: wrappedImages }
-                    },
-                    { asType: "generation" }
-                );
-
-                let sessionPromptTokens = 0;
-                let sessionCandidatesTokens = 0;
-                let sessionTotalTokens = 0;
-
-                const eventStream = runner.runAsync({
-                    sessionId: session.id,
-                    userId: session.userId,
-                    newMessage: {
-                        role: 'user',
-                        parts: parts
+                    let parsed;
+                    try {
+                        parsed = extractionBatchSchema.parse(JSON.parse(extractJsonObject(text)));
+                    } catch (e) {
+                        const snippet = text.length > 1200 ? `${text.slice(0, 1200)}...<truncated>` : text;
+                        throw new Error(
+                            [`IntelAgent extraction batch ${bi} produced invalid JSON.`, snippet, String(e)].join("\n"),
+                        );
                     }
-                });
+                    batchPayloads.push({ batchIndex: bi, findings: parsed.findings });
+                }
 
-                for await (const event of eventStream) {
-                    if (event.usageMetadata) {
-                        sessionPromptTokens += event.usageMetadata.promptTokenCount || 0;
-                        sessionCandidatesTokens += event.usageMetadata.candidatesTokenCount || 0;
-                        sessionTotalTokens += event.usageMetadata.totalTokenCount || 0;
-                    }
-                    console.log("DEBUG EVENT:", JSON.stringify(event, (k, v) => (k === 'data' && typeof v === 'string' && v.length > 200) ? '<base64 image removed>' : v, 2));
-
-                    if (isFinalResponse(event)) {
-                        if (event.content && event.content.parts && event.content.parts.length > 0) {
-                            finalResponseText = event.content.parts[0].text || "";
-                        } else if (event.actions && (event.actions as any).escalate) {
-                            finalResponseText = `Agent escalated: ${(event as any).errorMessage || 'No specific message.'}`;
-                        }
-                        break;
+                let merged: z.infer<typeof mergePassSchema>;
+                const hadAnyFinding = batchPayloads.some((b) => b.findings.length > 0);
+                if (!hadAnyFinding) {
+                    merged = { mergedFindings: [] };
+                } else {
+                    const mergeUserText = buildMergeUserPayload(batchPayloads);
+                    const { system: mergeSystem, user: mergeUser } =
+                        await this.formatter.formatIntelMergePrompt(mergeUserText);
+                    const { text: mergeText } = await this.runIntelLlmTurn({
+                        agentName: "intel_merge",
+                        agentDescription: "Merge UAV extraction findings for IntelAgent.",
+                        systemInstruction: mergeSystem,
+                        userParts: [{ text: mergeUser }],
+                        langfuseGenerationName: "IntelAgent-merge",
+                        langfuseInput: { batches: batchPayloads.length },
+                    });
+                    try {
+                        merged = mergePassSchema.parse(JSON.parse(extractJsonObject(mergeText)));
+                    } catch (e) {
+                        const snippet = mergeText.length > 1200 ? `${mergeText.slice(0, 1200)}...<truncated>` : mergeText;
+                        throw new Error(
+                            ["IntelAgent merge pass produced invalid JSON.", snippet, String(e)].join("\n"),
+                        );
                     }
                 }
 
-                generation.update({
-                    prompt: promptObj,
-                    usageDetails: {
-                        input: sessionPromptTokens,
-                        output: sessionCandidatesTokens,
-                        total: sessionTotalTokens
+                const mapExtentLine = formatIntelMapExtentBlock(gameMapArea);
+                const { supplementUserText } = await this.formatter.formatIntelFinalizeSupplement(
+                    JSON.stringify(merged, null, 2),
+                    mapExtentLine,
+                );
+
+                const frameSatelliteB64 = gameMapArea.getBase64Image("frame_satellite");
+                const finalParts: any[] = [
+                    {
+                        text: `${userPrompt}\n${supplementUserText}`,
                     },
-                    output: { content: finalResponseText }
+                    {
+                        inlineData: {
+                            mimeType: "image/png",
+                            data: frameSatelliteB64,
+                        },
+                    },
+                ];
+
+                const wrappedImages = [
+                    new LangfuseMedia({
+                        source: "bytes",
+                        contentBytes: Buffer.from(frameSatelliteB64, "base64"),
+                        contentType: "image/png",
+                    }),
+                ];
+
+                const { text: finalResponseText } = await this.runIntelLlmTurn({
+                    agentName: "intel_finalize",
+                    agentDescription: "Finalize structured intel marks from merged UAV findings.",
+                    systemInstruction: systemPrompt,
+                    userParts: finalParts,
+                    langfuseGenerationName: "IntelAgent-finalize",
+                    langfuseInput: {
+                        observations: intel.observations,
+                        mergedFindingCount: merged.mergedFindings.length,
+                        images: wrappedImages,
+                    },
+                    promptObj,
                 });
-                generation.end();
 
                 const structuredIntelResult = this.parseStructuredIntelResponse(finalResponseText);
                 span.update({
                     output: {
                         report: structuredIntelResult.report,
                         marks: structuredIntelResult.marks,
-                    }
+                        stagedBatches: batches.length,
+                        mergedFindings: merged.mergedFindings.length,
+                    },
                 });
                 return structuredIntelResult;
             });
         });
+    }
+
+    /**
+     * Original one-shot multimodal IntelAgent path (all photos + map in a single turn).
+     * Used when there are no photos, or when AKELA_INTEL_LEGACY_SINGLESHOT=1.
+     */
+    private async runLegacyIntelSingleshot(params: {
+        span: { update: (u: Record<string, unknown>) => void };
+        intel: Intel;
+        gameMapArea: GameMapArea;
+        systemPrompt: string;
+        userPrompt: string;
+        promptObj: unknown;
+    }): Promise<StructuredIntelResult> {
+        const { span, intel, gameMapArea, systemPrompt, userPrompt, promptObj } = params;
+
+        const parts: any[] = [{ text: userPrompt }];
+        let idx = 1;
+        for (const image of intel.images) {
+            const label = photoLabel(idx, image.getPath());
+            parts.push({ text: `[${label}]` });
+            parts.push({
+                inlineData: {
+                    mimeType: mimeTypeForImagePath(image.getPath()),
+                    data: image.getBase64(),
+                },
+            });
+            idx++;
+        }
+
+        const frameSatelliteB64 = gameMapArea.getBase64Image("frame_satellite");
+
+        parts.push({
+            inlineData: {
+                mimeType: "image/png",
+                data: frameSatelliteB64,
+            },
+        });
+
+        const wrappedImages = intel.images.map((img) => {
+            const ct =
+                mimeTypeForImagePath(img.getPath()) === "image/png" ? ("image/png" as const) : ("image/jpeg" as const);
+            return new LangfuseMedia({
+                source: "bytes",
+                contentBytes: Buffer.from(img.getBase64(), "base64"),
+                contentType: ct,
+            });
+        });
+        wrappedImages.push(
+            new LangfuseMedia({
+                source: "bytes",
+                contentBytes: Buffer.from(frameSatelliteB64, "base64"),
+                contentType: "image/png",
+            }),
+        );
+
+        const { text: finalResponseText } = await this.runIntelLlmTurn({
+            agentName: "intel_agent",
+            agentDescription: "Analyzes intelligence observations and images.",
+            systemInstruction: systemPrompt,
+            userParts: parts,
+            langfuseGenerationName: "IntelAgent-LLM",
+            langfuseInput: { observations: intel.observations, images: wrappedImages },
+            promptObj,
+        });
+
+        const structuredIntelResult = this.parseStructuredIntelResponse(finalResponseText);
+        span.update({
+            output: {
+                report: structuredIntelResult.report,
+                marks: structuredIntelResult.marks,
+                stagedBatches: 0,
+            },
+        });
+        return structuredIntelResult;
     }
 }
 

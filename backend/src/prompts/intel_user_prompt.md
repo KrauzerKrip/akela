@@ -1,7 +1,9 @@
 Here are the latest observations and map layers.
 
-After any UAV or observation photos, you receive **two PNG map images in fixed order**:
+After any UAV or observation photos (when present in this turn), you receive **one PNG map image**:
 1. **Gridded satellite reference** (`frame_satellite`): satellite imagery plus frame and axis ticks — use this to interpolate positions into **full Arma world meters** (see system prompt tick ×100 rule).
+
+Some IntelAgent runs first analyze UAV photos in labeled batches (without this map), then produce final coordinates using this gridded frame plus merged findings — follow the same coordinate rules whenever this map is attached.
 
 Observations:
 {{OBSERVATION_BLOCK}}
