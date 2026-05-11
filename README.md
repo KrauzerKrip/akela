@@ -1,5 +1,7 @@
 # Akela
 
+Video demo: https://www.youtube.com/watch?v=q1pFpIK76kI
+
 Akela is an **agentic commander** for **Arma 3**: it closes an **Intel → Plan → Execution** loop using Gemini models (Google ADK), a **Bun** backend that bridges the game, and a **React** war-room UI for maps, timelines, and live events.
 
 ## What lives where
